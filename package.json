@@ -7,13 +7,18 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"check": "biome check --write src"
 	},
 	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
 		"@cloudflare/vitest-pool-workers": "^0.7.5",
 		"@cloudflare/workers-types": "^4.20250421.0",
 		"typescript": "^5.5.2",
 		"vitest": "~3.0.7",
 		"wrangler": "^4.12.0"
+	},
+	"dependencies": {
+		"hono": "^4.7.7"
 	}
 }

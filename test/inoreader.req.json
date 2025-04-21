@@ -1,0 +1,21 @@
+{
+  "rule": {
+    "name": "MASKED"
+  },
+  "items": [
+    {
+      "categories": [
+        "user/0000000000/state/com.google/reading-list",
+        "user/0000000000/state/com.google/read",
+        "user/0000000000/label/foo",
+        "user/0000000000/label/bar"
+      ],
+      "title": "テストテストテスト",
+      "canonical": [
+        {
+          "href": "https://example.com"
+        }
+      ]
+    }
+  ]
+}
