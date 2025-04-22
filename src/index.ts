@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-interface InoreaderWebhookRequestBody {
+type InoreaderWebhookRequestBody = {
 	items: {
 		title: string;
 		categories: string[];
@@ -8,7 +8,7 @@ interface InoreaderWebhookRequestBody {
 			href: string;
 		}[];
 	}[];
-}
+};
 
 type Bindings = {
 	NOTION_API_KEY: string;
