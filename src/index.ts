@@ -31,7 +31,17 @@ app.post("/", async (c) => {
 	const body = {
 		parent: { database_id: c.env.NOTION_DATABASE_ID },
 		properties: {
-			Title: { title: [{ type: "text", text: { content: title } }] },
+			Title: {
+				title: [
+					{
+						type: "text",
+						text: {
+							content: title,
+							link: { url: url },
+						},
+					},
+				],
+			},
 			URL: { url },
 			Tags: { multi_select: [{ name: "inotion", color: "blue" }] },
 		},
