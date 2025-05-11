@@ -18,11 +18,14 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.post("/", async (c) => {
+app.use("*", async (c, next) => {
 	if (!c.req.header("x-inoreader-rule-name")?.includes(c.env.INOREADER_RULE_NAME)) {
 		return new Response("Forbidden", { status: 403 });
 	}
+	await next();
+});
 
+app.post("/", async (c) => {
 	const inoreader = await c.req.json<InoreaderWebhookRequestBody>();
 	const item = inoreader.items[0];
 
