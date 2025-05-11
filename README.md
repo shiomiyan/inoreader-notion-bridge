@@ -1,0 +1,1 @@
+Inoreaderで記事を保存したらNotion Databaseに追加するためのCloudflare Workersです。
