@@ -46,7 +46,6 @@ app.post("/", async (c) => {
 				],
 			},
 			URL: { url },
-			Tags: { multi_select: [{ name: "inotion", color: "blue" }] },
 		},
 	};
 
