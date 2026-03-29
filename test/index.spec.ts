@@ -51,6 +51,10 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
+			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
+				return jsonResponse({ id: "notion-ds" });
+			}
+
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
 				return jsonResponse({ results: [], has_more: false, next_cursor: null });
 			}
@@ -131,6 +135,10 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
+			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
+				return jsonResponse({ id: "notion-ds" });
+			}
+
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
 				return jsonResponse({ results: [], has_more: false, next_cursor: null });
 			}
@@ -169,6 +177,10 @@ describe("inoreader notion bridge", () => {
 	it("updates existing page instead of creating a new one", async () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
+
+			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
+				return jsonResponse({ id: "notion-ds" });
+			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
 				return jsonResponse({
@@ -247,6 +259,10 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
+			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
+				return jsonResponse({ id: "notion-ds" });
+			}
+
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
 				return jsonResponse({ results: [], has_more: false, next_cursor: null });
 			}
@@ -322,6 +338,63 @@ describe("inoreader notion bridge", () => {
 		expect(markdown).toContain("- Feed: Example Feed");
 		expect(markdown).toContain("本文です。");
 		expect(markdown).not.toContain("# 記事タイトル");
+	});
+
+	it("resolves a database parent to its first data source", async () => {
+		const databaseId = "123456781234123412341234567890ab";
+		const dataSourceId = "abcdefabcdefabcdefabcdefabcdefab";
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url === `https://api.notion.com/v1/databases/${databaseId}` && init?.method === "GET") {
+				return jsonResponse({
+					id: databaseId,
+					data_sources: [{ id: dataSourceId }],
+				});
+			}
+
+			if (url === `https://api.notion.com/v1/data_sources/${dataSourceId}/query`) {
+				return jsonResponse({ results: [], has_more: false, next_cursor: null });
+			}
+
+			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
+				const body = parseJson(init?.body);
+				expect(body.parent).toEqual({ data_source_id: dataSourceId });
+				return jsonResponse({ id: "created-page" });
+			}
+
+			if (url === "https://example.com/") {
+				return new Response("<html><body><p>Article body</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# テストテストテスト\n\n本文A",
+			}),
+		};
+
+		vi.stubGlobal("fetch", fetchMock);
+
+		const response = await app.fetch(
+			createRequest(samplePayload),
+			createEnv({
+				AI: ai,
+				NOTION_DATA_SOURCE_ID: undefined,
+				NOTION_DATABASE_ID: `https://www.notion.so/My-DB-${databaseId}?v=test`,
+			}),
+			{} as ExecutionContext,
+		);
+		const body = (await response.json()) as { success: boolean; created: number; failed: number };
+
+		expect(response.status).toBe(200);
+		expect(body).toMatchObject({ success: true, created: 1, failed: 0 });
 	});
 });
 

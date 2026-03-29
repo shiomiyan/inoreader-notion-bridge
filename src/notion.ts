@@ -1,6 +1,7 @@
 import type { ParsedInoreaderItem } from "./inoreader";
 
-const NOTION_VERSION = "2026-03-11";
+const NOTION_QUERY_VERSION = "2025-09-03";
+const NOTION_CONTENT_VERSION = "2026-03-11";
 
 type NotionParent =
 	| {
@@ -22,6 +23,8 @@ export class NotionApiError extends Error {
 	constructor(
 		message: string,
 		readonly status: number,
+		readonly path: string,
+		readonly notionVersion: string,
 		readonly body?: unknown,
 	) {
 		super(message);
@@ -29,22 +32,26 @@ export class NotionApiError extends Error {
 	}
 }
 
-export function resolveNotionParent(env: {
-	NOTION_DATA_SOURCE_ID?: string;
-	NOTION_DATABASE_ID?: string;
-}): NotionParent {
+export async function resolveNotionParent(
+	fetchImpl: typeof fetch,
+	notionApiKey: string,
+	env: {
+		NOTION_DATA_SOURCE_ID?: string;
+		NOTION_DATABASE_ID?: string;
+	},
+): Promise<NotionParent> {
 	if (env.NOTION_DATA_SOURCE_ID) {
-		return {
+		return await ensureDataSourceParent(fetchImpl, notionApiKey, {
 			type: "data_source",
-			id: env.NOTION_DATA_SOURCE_ID,
-		};
+			id: normalizeNotionId(env.NOTION_DATA_SOURCE_ID),
+		});
 	}
 
 	if (env.NOTION_DATABASE_ID) {
-		return {
+		return await ensureDataSourceParent(fetchImpl, notionApiKey, {
 			type: "database",
-			id: env.NOTION_DATABASE_ID,
-		};
+			id: normalizeNotionId(env.NOTION_DATABASE_ID),
+		});
 	}
 
 	throw new Error("NOTION_DATA_SOURCE_ID or NOTION_DATABASE_ID is required");
@@ -103,7 +110,7 @@ export async function createOrUpdateNotionPage(
 	existingPageId: string | null,
 ): Promise<"created" | "updated"> {
 	if (!existingPageId) {
-		await notionRequest(fetchImpl, notionApiKey, "/v1/pages", {
+		await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
 			method: "POST",
 			body: JSON.stringify({
 				parent:
@@ -118,22 +125,34 @@ export async function createOrUpdateNotionPage(
 		return "created";
 	}
 
-	await notionRequest(fetchImpl, notionApiKey, `/v1/pages/${existingPageId}`, {
-		method: "PATCH",
-		body: JSON.stringify({
-			properties: buildPageProperties(item),
-		}),
-	});
+	await notionRequest(
+		fetchImpl,
+		notionApiKey,
+		`/v1/pages/${existingPageId}`,
+		NOTION_CONTENT_VERSION,
+		{
+			method: "PATCH",
+			body: JSON.stringify({
+				properties: buildPageProperties(item),
+			}),
+		},
+	);
 
-	await notionRequest(fetchImpl, notionApiKey, `/v1/pages/${existingPageId}/markdown`, {
-		method: "PATCH",
-		body: JSON.stringify({
-			type: "replace_content",
-			replace_content: {
-				new_str: markdown,
-			},
-		}),
-	});
+	await notionRequest(
+		fetchImpl,
+		notionApiKey,
+		`/v1/pages/${existingPageId}/markdown`,
+		NOTION_CONTENT_VERSION,
+		{
+			method: "PATCH",
+			body: JSON.stringify({
+				type: "replace_content",
+				replace_content: {
+					new_str: markdown,
+				},
+			}),
+		},
+	);
 
 	return "updated";
 }
@@ -149,7 +168,7 @@ async function queryPages(
 			? `/v1/data_sources/${parent.id}/query`
 			: `/v1/databases/${parent.id}/query`;
 
-	return await notionRequest<QueryResult>(fetchImpl, notionApiKey, path, {
+	return await notionRequest<QueryResult>(fetchImpl, notionApiKey, path, NOTION_QUERY_VERSION, {
 		method: "POST",
 		body: JSON.stringify(body),
 	});
@@ -159,6 +178,7 @@ async function notionRequest<T>(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	path: string,
+	notionVersion: string,
 	init: RequestInit,
 ): Promise<T> {
 	const response = await fetchImpl(`https://api.notion.com${path}`, {
@@ -166,7 +186,7 @@ async function notionRequest<T>(
 		headers: {
 			Authorization: `Bearer ${notionApiKey}`,
 			"Content-Type": "application/json",
-			"Notion-Version": NOTION_VERSION,
+			"Notion-Version": notionVersion,
 			...(init.headers ?? {}),
 		},
 	});
@@ -176,13 +196,65 @@ async function notionRequest<T>(
 
 	if (!response.ok) {
 		throw new NotionApiError(
-			`Notion API request failed with status ${response.status}`,
+			`Notion API request failed with status ${response.status} for ${path} (${notionVersion})`,
 			response.status,
+			path,
+			notionVersion,
 			body,
 		);
 	}
 
 	return body as T;
+}
+
+async function ensureDataSourceParent(
+	fetchImpl: typeof fetch,
+	notionApiKey: string,
+	parent: NotionParent,
+): Promise<NotionParent> {
+	if (parent.type === "database") {
+		return await discoverDataSourceParent(fetchImpl, notionApiKey, parent.id);
+	}
+
+	try {
+		await notionRequest(
+			fetchImpl,
+			notionApiKey,
+			`/v1/data_sources/${parent.id}`,
+			NOTION_QUERY_VERSION,
+			{ method: "GET" },
+		);
+
+		return parent;
+	} catch (error) {
+		if (!looksLikeWrongParentId(error)) {
+			throw error;
+		}
+
+		return await discoverDataSourceParent(fetchImpl, notionApiKey, parent.id);
+	}
+}
+
+async function discoverDataSourceParent(
+	fetchImpl: typeof fetch,
+	notionApiKey: string,
+	databaseId: string,
+): Promise<NotionParent> {
+	const database = await notionRequest<{
+		data_sources?: Array<{ id?: string }>;
+	}>(fetchImpl, notionApiKey, `/v1/databases/${databaseId}`, NOTION_QUERY_VERSION, {
+		method: "GET",
+	});
+
+	const dataSourceId = database.data_sources?.[0]?.id;
+	if (!dataSourceId) {
+		throw new Error(`No data source found for database ${databaseId}`);
+	}
+
+	return {
+		type: "data_source",
+		id: normalizeNotionId(dataSourceId),
+	};
 }
 
 function buildPageProperties(item: ParsedInoreaderItem) {
@@ -230,4 +302,38 @@ function safeJsonParse(value: string): unknown {
 	} catch {
 		return value;
 	}
+}
+
+function normalizeNotionId(value: string): string {
+	const trimmed = value.trim();
+	const directMatch = trimmed.match(/^[0-9a-fA-F-]{32,36}$/);
+	if (directMatch) {
+		return trimmed;
+	}
+
+	const extracted = trimmed.match(
+		/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})/,
+	);
+	if (extracted) {
+		return extracted[1];
+	}
+
+	return trimmed;
+}
+
+function looksLikeWrongParentId(error: unknown): error is NotionApiError {
+	if (!(error instanceof NotionApiError)) {
+		return false;
+	}
+
+	if (error.status !== 400 && error.status !== 404) {
+		return false;
+	}
+
+	const code =
+		error.body && typeof error.body === "object" && "code" in error.body
+			? (error.body as { code?: unknown }).code
+			: undefined;
+
+	return code === "invalid_request_url" || code === "object_not_found";
 }

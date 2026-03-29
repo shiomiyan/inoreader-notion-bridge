@@ -48,7 +48,7 @@ app.post("/", async (c) => {
 		);
 	}
 
-	const parent = resolveNotionParent(c.env);
+	const parent = await resolveNotionParent(fetch, c.env.NOTION_API_KEY, c.env);
 	const results: ProcessResult[] = [];
 
 	for (const item of items) {
@@ -74,7 +74,7 @@ app.post("/", async (c) => {
 async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
-	parent: ReturnType<typeof resolveNotionParent>,
+	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
 ): Promise<ProcessResult> {
 	try {
 		const existingPageId = await findExistingNotionPageByUrl(
