@@ -15,7 +15,23 @@
         {
           "href": "https://example.com"
         }
-      ]
+      ],
+      "alternate": [
+        {
+          "href": "https://example.com/alternate",
+          "type": "text/html"
+        }
+      ],
+      "summary": {
+        "direction": "ltr",
+        "content": "<div><p>Webhook summary body</p></div>"
+      },
+      "author": "Example Author",
+      "published": 1711676800,
+      "origin": {
+        "title": "Example Feed",
+        "htmlUrl": "https://feed.example.com"
+      }
     }
   ]
 }

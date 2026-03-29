@@ -14,9 +14,11 @@ sequenceDiagram
     Inoreader->>Worker: 記事保存時にWebhookをPOST
     Worker->>Worker: x-inoreader-rule-name を検証
     Worker->>Worker: title / canonical URL を抽出
-    Worker->>NotionAPI: pages.create
-    NotionAPI->>Database: Title と URL を登録
-    Database-->>Worker: 作成結果を返却
+    Worker->>Worker: 記事URLをfetchしてHTML取得
+    Worker->>Worker: Workers AI toMarkdownで本文をMarkdown化
+    Worker->>NotionAPI: data source query / pages.create / pages.markdown update
+    NotionAPI->>Database: Title / URL / 本文をupsert
+    Database-->>Worker: 作成または更新結果を返却
     Worker-->>Inoreader: success / error
 ```
 
@@ -26,3 +28,4 @@ sequenceDiagram
 | --- | --- |
 | Server | Hono |
 | Deploy | Cloudflare Workers |
+| Markdown Conversion | Workers AI `AI.toMarkdown()` |
