@@ -48,63 +48,33 @@ app.post("/", async (c) => {
 		);
 	}
 
-	const requestId = c.req.header("cf-ray") ?? crypto.randomUUID();
-	c.executionCtx.waitUntil(processWebhook(items, c.env, requestId));
+	const parent = await resolveNotionParent(fetch, c.env.NOTION_API_KEY, c.env);
+	const results: ProcessResult[] = [];
+
+	for (const item of items) {
+		results.push(await processItem(item, c.env, parent));
+	}
+
+	const created = results.filter((result) => result.status === "created").length;
+	const updated = results.filter((result) => result.status === "updated").length;
+	const failed = results.filter((result) => result.status === "failed").length;
 
 	return Response.json(
 		{
-			accepted: true,
-			queued: items.length,
-			requestId,
-		},
-		{ status: 202 },
-	);
-});
-
-async function processWebhook(items: ParsedInoreaderItem[], env: Bindings, requestId: string) {
-	console.log("Webhook processing started", {
-		requestId,
-		itemCount: items.length,
-	});
-
-	try {
-		const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
-		const results: ProcessResult[] = [];
-
-		for (const item of items) {
-			results.push(await processItem(item, env, parent, requestId));
-		}
-
-		const created = results.filter((result) => result.status === "created").length;
-		const updated = results.filter((result) => result.status === "updated").length;
-		const failed = results.filter((result) => result.status === "failed").length;
-		const logPayload = {
-			requestId,
+			success: failed === 0,
 			created,
 			updated,
 			failed,
 			results,
-		};
-
-		if (failed > 0) {
-			console.error("Webhook processing completed with failures", logPayload);
-			return;
-		}
-
-		console.log("Webhook processing completed", logPayload);
-	} catch (error) {
-		console.error("Webhook processing crashed", {
-			requestId,
-			error: serializeError(error),
-		});
-	}
-}
+		},
+		{ status: failed === 0 ? 200 : 500 },
+	);
+});
 
 async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
 	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
-	requestId: string,
 ): Promise<ProcessResult> {
 	try {
 		const existingPageId = await findExistingNotionPageByUrl(
@@ -130,11 +100,7 @@ async function processItem(
 			status,
 		};
 	} catch (error) {
-		console.error("Failed to process item", {
-			requestId,
-			item,
-			error: serializeError(error),
-		});
+		console.error("Failed to process item", { item, error });
 
 		return {
 			title: item.title,
@@ -147,19 +113,6 @@ async function processItem(
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-function serializeError(error: unknown) {
-	if (error instanceof Error) {
-		return {
-			name: error.name,
-			message: error.message,
-			stack: error.stack,
-			...(typeof error === "object" ? error : {}),
-		};
-	}
-
-	return error;
 }
 
 export { app };
