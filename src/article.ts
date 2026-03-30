@@ -1,31 +1,6 @@
 import type { ParsedInoreaderItem } from "./inoreader";
 
-export type AiMarkdownResponse =
-	| {
-			format: "markdown";
-			data: string;
-	  }
-	| {
-			format: "error";
-			error: string;
-	  };
-
-export type AiBinding = {
-	toMarkdown: (
-		document: {
-			name: string;
-			blob: Blob;
-		},
-		options?: {
-			conversionOptions?: {
-				html?: {
-					hostname?: string;
-					cssSelector?: string;
-				};
-			};
-		},
-	) => Promise<AiMarkdownResponse>;
-};
+export type MarkdownAi = Pick<Env["AI"], "toMarkdown">;
 
 export type ArticleHtml = {
 	html: string;
@@ -36,7 +11,7 @@ const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
 
 export async function resolveArticleMarkdown(
 	item: ParsedInoreaderItem,
-	ai: AiBinding,
+	ai: MarkdownAi,
 	fetchImpl: typeof fetch,
 ): Promise<string> {
 	try {
@@ -91,7 +66,7 @@ export async function fetchArticleHtml(url: string, fetchImpl: typeof fetch): Pr
 }
 
 export async function convertHtmlToMarkdown(
-	ai: AiBinding,
+	ai: MarkdownAi,
 	html: string,
 	hostname: string,
 ): Promise<string> {

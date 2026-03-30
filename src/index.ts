@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 
-import { type AiBinding, buildNotionMarkdown, resolveArticleMarkdown } from "./article";
+import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import {
 	type InoreaderWebhookRequestBody,
 	type ParsedInoreaderItem,
@@ -12,8 +12,7 @@ import {
 	resolveNotionParent,
 } from "./notion";
 
-export type Bindings = {
-	AI: AiBinding;
+export type Bindings = Env & {
 	NOTION_API_KEY: string;
 	NOTION_DATA_SOURCE_ID?: string;
 	NOTION_DATABASE_ID?: string;
