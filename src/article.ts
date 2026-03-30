@@ -32,8 +32,7 @@ export type ArticleHtml = {
 	hostname: string;
 };
 
-const ARTICLE_FETCH_TIMEOUT_MS = 5_000;
-const AI_MARKDOWN_TIMEOUT_MS = 7_000;
+const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
 
 export async function resolveArticleMarkdown(
 	item: ParsedInoreaderItem,
@@ -49,11 +48,7 @@ export async function resolveArticleMarkdown(
 		}
 
 		const hostname = new URL(item.url).hostname;
-		try {
-			return await convertHtmlToMarkdown(ai, item.summaryHtml, hostname);
-		} catch {
-			return fallbackMarkdownFromHtml(item.summaryHtml);
-		}
+		return await convertHtmlToMarkdown(ai, item.summaryHtml, hostname);
 	}
 }
 
@@ -100,22 +95,18 @@ export async function convertHtmlToMarkdown(
 	html: string,
 	hostname: string,
 ): Promise<string> {
-	const result = await withTimeout(
-		ai.toMarkdown(
-			{
-				name: "article.html",
-				blob: new Blob([html], { type: "text/html" }),
-			},
-			{
-				conversionOptions: {
-					html: {
-						hostname,
-					},
+	const result = await ai.toMarkdown(
+		{
+			name: "article.html",
+			blob: new Blob([html], { type: "text/html" }),
+		},
+		{
+			conversionOptions: {
+				html: {
+					hostname,
 				},
 			},
-		),
-		AI_MARKDOWN_TIMEOUT_MS,
-		"Markdown conversion timed out",
+		},
 	);
 
 	if (result.format === "error") {
@@ -128,29 +119,6 @@ export async function convertHtmlToMarkdown(
 	}
 
 	return markdown;
-}
-
-function fallbackMarkdownFromHtml(html: string): string {
-	const text = html
-		.replace(/<script[\s\S]*?<\/script>/gi, " ")
-		.replace(/<style[\s\S]*?<\/style>/gi, " ")
-		.replace(/<br\s*\/?>/gi, "\n")
-		.replace(/<\/(p|div|section|article|li|h[1-6])>/gi, "\n")
-		.replace(/<[^>]+>/g, " ")
-		.replace(/&nbsp;/gi, " ")
-		.replace(/&amp;/gi, "&")
-		.replace(/&lt;/gi, "<")
-		.replace(/&gt;/gi, ">")
-		.replace(/\r/g, "")
-		.replace(/\n{3,}/g, "\n\n")
-		.replace(/[ \t]{2,}/g, " ")
-		.trim();
-
-	if (!text) {
-		throw new Error("Summary HTML fallback returned empty content");
-	}
-
-	return text;
 }
 
 export function buildNotionMarkdown(
@@ -197,25 +165,4 @@ function normalizeHeading(value: string): string {
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-async function withTimeout<T>(
-	promise: Promise<T>,
-	timeoutMs: number,
-	timeoutMessage: string,
-): Promise<T> {
-	let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-	try {
-		return await Promise.race([
-			promise,
-			new Promise<T>((_, reject) => {
-				timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-			}),
-		]);
-	} finally {
-		if (timeoutId) {
-			clearTimeout(timeoutId);
-		}
-	}
 }

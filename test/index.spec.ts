@@ -182,49 +182,6 @@ describe("inoreader notion bridge", () => {
 		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
 	});
 
-	it("falls back to plain text summary when AI markdown conversion fails", async () => {
-		const fetchMock = createFetchMock(async (input, init) => {
-			const url = getUrl(input);
-
-			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
-				return jsonResponse({ id: "notion-ds" });
-			}
-
-			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
-				return jsonResponse({ results: [], has_more: false, next_cursor: null });
-			}
-
-			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
-				const body = parseJson(init?.body);
-				expect(body.markdown).toContain("Webhook summary body");
-				expect(body.markdown).not.toContain("<div>");
-				return jsonResponse({ id: "created-page" });
-			}
-
-			if (url === "https://example.com/") {
-				return new Response("boom", { status: 500 });
-			}
-
-			throw new Error(`Unhandled fetch for ${url}`);
-		});
-
-		const ai = {
-			toMarkdown: vi.fn().mockRejectedValue(new Error("AI unavailable")),
-		};
-
-		vi.stubGlobal("fetch", fetchMock);
-		const executionContext = createExecutionContext();
-
-		const response = await app.fetch(
-			createRequest(samplePayload),
-			createEnv({ AI: ai }),
-			executionContext,
-		);
-
-		expect(response.status).toBe(202);
-		await executionContext.flush();
-	});
-
 	it("updates existing page instead of creating a new one", async () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);

@@ -106,24 +106,15 @@ async function processItem(
 	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
 	requestId: string,
 ): Promise<ProcessResult> {
-	const startedAt = performance.now();
-
 	try {
-		const lookupStartedAt = performance.now();
 		const existingPageId = await findExistingNotionPageByUrl(
 			fetch,
 			env.NOTION_API_KEY,
 			parent,
 			item.url,
 		);
-		const lookupMs = Math.round(performance.now() - lookupStartedAt);
-
-		const markdownStartedAt = performance.now();
 		const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
-		const markdownMs = Math.round(performance.now() - markdownStartedAt);
-
 		const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
-		const saveStartedAt = performance.now();
 		const status = await createOrUpdateNotionPage(
 			fetch,
 			env.NOTION_API_KEY,
@@ -132,22 +123,6 @@ async function processItem(
 			notionMarkdown,
 			existingPageId,
 		);
-		const saveMs = Math.round(performance.now() - saveStartedAt);
-		const totalMs = Math.round(performance.now() - startedAt);
-
-		console.log("Processed item", {
-			requestId,
-			title: item.title,
-			url: item.url,
-			status,
-			existingPageId,
-			durations: {
-				lookupMs,
-				markdownMs,
-				saveMs,
-				totalMs,
-			},
-		});
 
 		return {
 			title: item.title,
@@ -158,7 +133,6 @@ async function processItem(
 		console.error("Failed to process item", {
 			requestId,
 			item,
-			elapsedMs: Math.round(performance.now() - startedAt),
 			error: serializeError(error),
 		});
 
