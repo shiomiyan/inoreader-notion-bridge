@@ -56,14 +56,6 @@ app.post("/", async (c) => {
 	}
 
 	const requestId = c.req.header("cf-ray") ?? crypto.randomUUID();
-	console.log("Accepted Inoreader webhook", {
-		requestId,
-		itemCount: items.length,
-		ruleName: c.req.header("x-inoreader-rule-name"),
-		matchesToday: c.req.header("x-inoreader-rule-matches-today"),
-		matchesTotal: c.req.header("x-inoreader-rule-matches-total"),
-	});
-
 	const processing = processWebhook(items, c.env, requestId);
 	const executionCtx = tryGetExecutionContext(c);
 
@@ -108,19 +100,11 @@ async function processWebhook(
 		}
 
 		const summary = summarizeResults(results);
-		console.log("Processed Inoreader webhook", {
-			requestId,
-			itemCount: items.length,
-			created: summary.created,
-			updated: summary.updated,
-			failed: summary.failed,
-			durationMs: Date.now() - startedAt,
-		});
-
 		if (summary.failed > 0) {
 			console.error("Inoreader webhook completed with failures", {
 				requestId,
 				failures: summary.results.filter((result) => result.status === "failed"),
+				durationMs: Date.now() - startedAt,
 			});
 		}
 
