@@ -47,8 +47,7 @@ app.post("/", async (c) => {
 		return new Response("Bad Request", { status: 400 });
 	}
 
-	const requestId = c.req.header("cf-ray") ?? crypto.randomUUID();
-	const processing = processWebhook(items, c.env, requestId);
+	const processing = processWebhook(items, c.env);
 
 	try {
 		const executionCtx = tryGetExecutionContext(c);
@@ -60,7 +59,6 @@ app.post("/", async (c) => {
 		}
 	} catch (error) {
 		console.error("Failed to accept webhook", {
-			requestId,
 			error: serializeError(error),
 		});
 
@@ -73,7 +71,6 @@ app.post("/", async (c) => {
 async function processWebhook(
 	items: ParsedInoreaderItem[],
 	env: Bindings,
-	requestId: string,
 ): Promise<void> {
 	const startedAt = Date.now();
 
@@ -87,14 +84,12 @@ async function processWebhook(
 
 		if (results.some((result) => result.status === "failed")) {
 			console.error("Inoreader webhook completed with failures", {
-				requestId,
 				failures: results.filter((result) => result.status === "failed"),
 				durationMs: Date.now() - startedAt,
 			});
 		}
 	} catch (error) {
 		console.error("Failed to process webhook", {
-			requestId,
 			error: serializeError(error),
 			durationMs: Date.now() - startedAt,
 		});
