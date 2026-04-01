@@ -8,7 +8,8 @@
 		"start": "wrangler dev",
 		"test": "vitest run",
 		"cf-typegen": "wrangler types",
-		"check": "biome check --write src"
+		"check": "tsc --noEmit && biome check --write ./src",
+		"lint": "biome lint ./src"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.9",

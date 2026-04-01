@@ -99,20 +99,9 @@ describe("inoreader notion bridge", () => {
 			createEnv({ AI: ai }),
 			executionCtx,
 		);
-		const body = (await response.json()) as {
-			success: boolean;
-			accepted: number;
-			processing: string;
-		};
 
-		expect(response.status).toBe(200);
-		expect(body).toMatchObject({
-			success: true,
-			accepted: 2,
-			processing: "async",
-		});
+		expect(response.status).toBe(202);
 		await waitForBackgroundTasks(executionCtx);
-		expect(response.status).toBe(200);
 		expect(ai.toMarkdown).toHaveBeenCalledTimes(2);
 		expect(fetchMock).toHaveBeenCalledWith(
 			"https://example.com/",
@@ -176,7 +165,7 @@ describe("inoreader notion bridge", () => {
 			executionCtx,
 		);
 
-		expect(response.status).toBe(200);
+		expect(response.status).toBe(202);
 		await waitForBackgroundTasks(executionCtx);
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
 		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
@@ -238,10 +227,8 @@ describe("inoreader notion bridge", () => {
 			createEnv({ AI: ai }),
 			executionCtx,
 		);
-		const body = (await response.json()) as { success: boolean; accepted: number };
 
-		expect(response.status).toBe(200);
-		expect(body).toMatchObject({ success: true, accepted: 1 });
+		expect(response.status).toBe(202);
 		await waitForBackgroundTasks(executionCtx);
 		expect(fetchMock).not.toHaveBeenCalledWith(
 			"https://api.notion.com/v1/pages",
@@ -249,7 +236,7 @@ describe("inoreader notion bridge", () => {
 		);
 	});
 
-	it("returns 500 and aggregates failures per item", async () => {
+	it("returns 202 and logs failures per item", async () => {
 		const payload: InoreaderWebhookRequestBody = {
 			...samplePayload,
 			items: [
@@ -307,22 +294,12 @@ describe("inoreader notion bridge", () => {
 			createEnv({ AI: ai }),
 			executionCtx,
 		);
-		const body = (await response.json()) as {
-			success: boolean;
-			accepted: number;
-			requestId: string;
-		};
 
-		expect(response.status).toBe(200);
-		expect(body).toMatchObject({
-			success: true,
-			accepted: 2,
-		});
+		expect(response.status).toBe(202);
 		await waitForBackgroundTasks(executionCtx);
 		expect(console.error).toHaveBeenCalledWith(
 			"Inoreader webhook completed with failures",
 			expect.objectContaining({
-				requestId: body.requestId,
 				failures: expect.arrayContaining([
 					expect.objectContaining({
 						status: "failed",
@@ -404,11 +381,34 @@ describe("inoreader notion bridge", () => {
 			}),
 			executionCtx,
 		);
-		const body = (await response.json()) as { success: boolean; accepted: number };
 
-		expect(response.status).toBe(200);
-		expect(body).toMatchObject({ success: true, accepted: 1 });
+		expect(response.status).toBe(202);
 		await waitForBackgroundTasks(executionCtx);
+	});
+
+	it("returns 400 when payload JSON is invalid", async () => {
+		const response = await app.fetch(
+			new Request("https://example.com/", {
+				method: "POST",
+				body: "{invalid json",
+				headers: {
+					"Content-Type": "application/json",
+					"x-inoreader-rule-name": "MASKED",
+				},
+			}),
+			createEnv(),
+		);
+
+		expect(response.status).toBe(400);
+	});
+
+	it("returns 400 when payload has no valid items", async () => {
+		const response = await app.fetch(
+			createRequest({ items: [{ title: "missing url" }] }),
+			createEnv(),
+		);
+
+		expect(response.status).toBe(400);
 	});
 });
 

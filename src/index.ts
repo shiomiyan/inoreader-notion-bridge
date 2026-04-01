@@ -1,5 +1,5 @@
-import { Hono } from "hono";
 import type { Context, ExecutionContext } from "hono";
+import { Hono } from "hono";
 
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import {
@@ -13,21 +13,13 @@ import {
 	resolveNotionParent,
 } from "./notion";
 
-export type Bindings = Env & {
-};
+export type Bindings = Env & {};
 
 export type ProcessResult = {
 	title: string;
 	url: string;
 	status: "created" | "updated" | "failed";
 	error?: string;
-};
-
-type ProcessSummary = {
-	created: number;
-	updated: number;
-	failed: number;
-	results: ProcessResult[];
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -41,50 +33,48 @@ app.use("*", async (c, next) => {
 });
 
 app.post("/", async (c) => {
-	const payload = await c.req.json<InoreaderWebhookRequestBody>();
+	let payload: InoreaderWebhookRequestBody;
+
+	try {
+		payload = await c.req.json<InoreaderWebhookRequestBody>();
+	} catch {
+		return new Response("Bad Request", { status: 400 });
+	}
+
 	const items = parseWebhookPayload(payload);
 
 	if (items.length === 0) {
-		return Response.json(
-			{ success: false, error: "No valid items found in webhook payload" },
-			{ status: 400 },
-		);
+		return new Response("Bad Request", { status: 400 });
 	}
 
 	const requestId = c.req.header("cf-ray") ?? crypto.randomUUID();
 	const processing = processWebhook(items, c.env, requestId);
-	const executionCtx = tryGetExecutionContext(c);
 
-	if (executionCtx) {
-		executionCtx.waitUntil(processing);
+	try {
+		const executionCtx = tryGetExecutionContext(c);
 
-		return Response.json({
-			success: true,
-			accepted: items.length,
-			processing: "async",
+		if (executionCtx) {
+			executionCtx.waitUntil(processing);
+		} else {
+			await processing;
+		}
+	} catch (error) {
+		console.error("Failed to accept webhook", {
 			requestId,
+			error: serializeError(error),
 		});
+
+		return new Response("Internal Server Error", { status: 500 });
 	}
 
-	const summary = await processing;
-	return Response.json(
-		{
-			success: summary.failed === 0,
-			created: summary.created,
-			updated: summary.updated,
-			failed: summary.failed,
-			results: summary.results,
-			requestId,
-		},
-		{ status: summary.failed === 0 ? 200 : 500 },
-	);
+	return new Response(null, { status: 202 });
 });
 
 async function processWebhook(
 	items: ParsedInoreaderItem[],
 	env: Bindings,
 	requestId: string,
-): Promise<ProcessSummary> {
+): Promise<void> {
 	const startedAt = Date.now();
 
 	try {
@@ -95,34 +85,19 @@ async function processWebhook(
 			results.push(await processItem(item, env, parent));
 		}
 
-		const summary = summarizeResults(results);
-		if (summary.failed > 0) {
+		if (results.some((result) => result.status === "failed")) {
 			console.error("Inoreader webhook completed with failures", {
 				requestId,
-				failures: summary.results.filter((result) => result.status === "failed"),
+				failures: results.filter((result) => result.status === "failed"),
 				durationMs: Date.now() - startedAt,
 			});
 		}
-
-		return summary;
 	} catch (error) {
 		console.error("Failed to process webhook", {
 			requestId,
 			error: serializeError(error),
 			durationMs: Date.now() - startedAt,
 		});
-
-		return {
-			created: 0,
-			updated: 0,
-			failed: items.length,
-			results: items.map((item) => ({
-				title: item.title,
-				url: item.url,
-				status: "failed",
-				error: toErrorMessage(error),
-			})),
-		};
 	}
 }
 
@@ -167,15 +142,6 @@ async function processItem(
 			error: toErrorMessage(error),
 		};
 	}
-}
-
-function summarizeResults(results: ProcessResult[]): ProcessSummary {
-	return {
-		created: results.filter((result) => result.status === "created").length,
-		updated: results.filter((result) => result.status === "updated").length,
-		failed: results.filter((result) => result.status === "failed").length,
-		results,
-	};
 }
 
 function tryGetExecutionContext(
