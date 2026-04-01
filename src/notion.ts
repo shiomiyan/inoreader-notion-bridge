@@ -19,6 +19,8 @@ type QueryResult = {
 	next_cursor?: string | null;
 };
 
+type NotionParentEnv = Pick<Env, "NOTION_DATABASE_ID">;
+
 export class NotionApiError extends Error {
 	constructor(
 		message: string,
@@ -35,18 +37,8 @@ export class NotionApiError extends Error {
 export async function resolveNotionParent(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
-	env: {
-		NOTION_DATA_SOURCE_ID?: string;
-		NOTION_DATABASE_ID?: string;
-	},
+	env: NotionParentEnv,
 ): Promise<NotionParent> {
-	if (env.NOTION_DATA_SOURCE_ID) {
-		return await ensureDataSourceParent(fetchImpl, notionApiKey, {
-			type: "data_source",
-			id: normalizeNotionId(env.NOTION_DATA_SOURCE_ID),
-		});
-	}
-
 	if (env.NOTION_DATABASE_ID) {
 		return await ensureDataSourceParent(fetchImpl, notionApiKey, {
 			type: "database",
@@ -54,7 +46,7 @@ export async function resolveNotionParent(
 		});
 	}
 
-	throw new Error("NOTION_DATA_SOURCE_ID or NOTION_DATABASE_ID is required");
+	throw new Error("NOTION_DATABASE_ID is required");
 }
 
 export async function findExistingNotionPageByUrl(

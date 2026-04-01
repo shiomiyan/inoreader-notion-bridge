@@ -56,8 +56,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
-				return jsonResponse({ id: "notion-ds" });
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -141,8 +141,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
-				return jsonResponse({ id: "notion-ds" });
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -186,8 +186,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
-				return jsonResponse({ id: "notion-ds" });
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -265,8 +265,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/data_sources/notion-ds") {
-				return jsonResponse({ id: "notion-ds" });
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -400,7 +400,6 @@ describe("inoreader notion bridge", () => {
 			createRequest(samplePayload),
 			createEnv({
 				AI: ai,
-				NOTION_DATA_SOURCE_ID: undefined,
 				NOTION_DATABASE_ID: `https://www.notion.so/My-DB-${databaseId}?v=test`,
 			}),
 			executionCtx,
@@ -427,7 +426,6 @@ function createRequest(body: unknown): Request {
 function createEnv(overrides?: Partial<{
 	AI: { toMarkdown: ReturnType<typeof vi.fn> };
 	NOTION_API_KEY: string;
-	NOTION_DATA_SOURCE_ID: string;
 	NOTION_DATABASE_ID: string;
 	INOREADER_RULE_NAME: string;
 }>) {
@@ -436,7 +434,7 @@ function createEnv(overrides?: Partial<{
 			toMarkdown: vi.fn(),
 		},
 		NOTION_API_KEY: "notion-secret",
-		NOTION_DATA_SOURCE_ID: "notion-ds",
+		NOTION_DATABASE_ID: "notion-db",
 		INOREADER_RULE_NAME: "MASKED",
 		...overrides,
 	};

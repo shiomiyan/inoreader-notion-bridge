@@ -10,6 +10,13 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"secrets": {
+		"required": [
+			"INOREADER_RULE_NAME",
+			"NOTION_API_KEY",
+			"NOTION_DATABASE_ID"
+		]
+	},
 	"observability": {
 		"enabled": true
 	},
