@@ -10,6 +10,19 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"queues": {
+		"producers": [
+			{
+				"queue": "inoreader-notion-bridge-queue",
+				"binding": "inoreader_notion_bridge_queue"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "inoreader-notion-bridge-queue"
+			}
+		]
+	},
 	"secrets": {
 		"required": [
 			"INOREADER_RULE_NAME",

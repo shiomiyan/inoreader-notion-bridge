@@ -1,18 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildNotionMarkdown } from "../src/article";
-import { app } from "../src/index";
-import type { InoreaderWebhookRequestBody } from "../src/inoreader";
+import { app, processWebhookBatch } from "../src/index";
+import type { Bindings } from "../src/index";
+import type { InoreaderWebhookRequestBody, ParsedInoreaderItem } from "../src/inoreader";
 import samplePayload from "./inoreader.req.json";
 
 type MockFetch = typeof fetch & {
 	mock: ReturnType<typeof vi.fn>;
 };
 
-type TestExecutionContext = ExecutionContext & {
-	waitUntilPromises: Promise<unknown>[];
-	waitUntil: ReturnType<typeof vi.fn<(promise: Promise<unknown>) => void>>;
-	passThroughOnException: ReturnType<typeof vi.fn>;
+type QueueMessageStub = Message<ParsedInoreaderItem> & {
+	ack: ReturnType<typeof vi.fn<() => void>>;
+	retry: ReturnType<typeof vi.fn<(options?: QueueRetryOptions) => void>>;
+};
+
+type QueueBatchStub = MessageBatch<ParsedInoreaderItem> & {
+	messages: QueueMessageStub[];
+	retryAll: ReturnType<typeof vi.fn<(options?: QueueRetryOptions) => void>>;
+	ackAll: ReturnType<typeof vi.fn<() => void>>;
 };
 
 describe("inoreader notion bridge", () => {
@@ -40,7 +46,7 @@ describe("inoreader notion bridge", () => {
 		expect(response.status).toBe(403);
 	});
 
-	it("creates pages for multiple items and converts fetched HTML with AI", async () => {
+	it("returns 202 and enqueues valid items", async () => {
 		const payload: InoreaderWebhookRequestBody = {
 			...samplePayload,
 			items: [
@@ -52,6 +58,72 @@ describe("inoreader notion bridge", () => {
 				},
 			],
 		};
+
+		const queue = createQueueBinding();
+		const response = await app.fetch(
+			createRequest(payload),
+			createEnv({ inoreader_notion_bridge_queue: queue }),
+		);
+
+		expect(response.status).toBe(202);
+		expect(queue.sendBatch).toHaveBeenCalledWith([
+			{
+				body: {
+					title: "テストテストテスト",
+					url: "https://example.com/",
+					summaryHtml: "<div><p>Webhook summary body</p></div>",
+					author: "Example Author",
+					published: 1_711_676_800,
+					feedTitle: "Example Feed",
+				},
+			},
+			{
+				body: {
+					title: "2本目の記事",
+					url: "https://example.com/second",
+					summaryHtml: "<div><p>Webhook summary body</p></div>",
+					author: "Example Author",
+					published: 1_711_676_800,
+					feedTitle: "Example Feed",
+				},
+			},
+		]);
+	});
+
+	it("returns 500 when queue enqueue fails", async () => {
+		const queue = createQueueBinding({
+			sendBatch: vi.fn().mockRejectedValue(new Error("queue down")),
+		});
+
+		const response = await app.fetch(
+			createRequest(samplePayload),
+			createEnv({ inoreader_notion_bridge_queue: queue }),
+		);
+
+		expect(response.status).toBe(500);
+		expect(console.error).toHaveBeenCalledWith(
+			"Failed to enqueue webhook items",
+			expect.objectContaining({
+				error: expect.objectContaining({
+					message: "queue down",
+				}),
+			}),
+		);
+	});
+
+	it("creates pages for multiple queued items and converts fetched HTML with AI", async () => {
+		const items: ParsedInoreaderItem[] = [
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+			{
+				title: "2本目の記事",
+				url: "https://example.com/second",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+		];
 
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
@@ -92,16 +164,10 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const executionCtx = createExecutionContext();
+		const batch = createMessageBatch(items);
 
-		const response = await app.fetch(
-			createRequest(payload),
-			createEnv({ AI: ai }),
-			executionCtx,
-		);
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
-		expect(response.status).toBe(202);
-		await waitForBackgroundTasks(executionCtx);
 		expect(ai.toMarkdown).toHaveBeenCalledTimes(2);
 		expect(fetchMock).toHaveBeenCalledWith(
 			"https://example.com/",
@@ -124,6 +190,9 @@ describe("inoreader notion bridge", () => {
 				},
 			},
 		});
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].retry).not.toHaveBeenCalled();
 	});
 
 	it("falls back to summary HTML when fetching article HTML fails", async () => {
@@ -157,18 +226,19 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const executionCtx = createExecutionContext();
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+		]);
 
-		const response = await app.fetch(
-			createRequest(samplePayload),
-			createEnv({ AI: ai }),
-			executionCtx,
-		);
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
-		expect(response.status).toBe(202);
-		await waitForBackgroundTasks(executionCtx);
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
 		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});
 
 	it("updates existing page instead of creating a new one", async () => {
@@ -220,34 +290,36 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const executionCtx = createExecutionContext();
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+		]);
 
-		const response = await app.fetch(
-			createRequest(samplePayload),
-			createEnv({ AI: ai }),
-			executionCtx,
-		);
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
-		expect(response.status).toBe(202);
-		await waitForBackgroundTasks(executionCtx);
 		expect(fetchMock).not.toHaveBeenCalledWith(
 			"https://api.notion.com/v1/pages",
 			expect.anything(),
 		);
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});
 
-	it("returns 202 and logs failures per item", async () => {
-		const payload: InoreaderWebhookRequestBody = {
-			...samplePayload,
-			items: [
-				samplePayload.items[0],
-				{
-					...samplePayload.items[0],
-					title: "成功する記事",
-					canonical: [{ href: "https://example.com/success" }],
-				},
-			],
-		};
+	it("retries only the failed queued item", async () => {
+		const items: ParsedInoreaderItem[] = [
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+			{
+				title: "成功する記事",
+				url: "https://example.com/success",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+		];
 
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
@@ -287,27 +359,47 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const executionCtx = createExecutionContext();
+		const batch = createMessageBatch(items);
 
-		const response = await app.fetch(
-			createRequest(payload),
-			createEnv({ AI: ai }),
-			executionCtx,
-		);
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
-		expect(response.status).toBe(202);
-		await waitForBackgroundTasks(executionCtx);
+		expect(batch.messages[0].retry).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].ack).not.toHaveBeenCalled();
+		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
 		expect(console.error).toHaveBeenCalledWith(
-			"Inoreader webhook completed with failures",
+			"Failed to process queued item",
 			expect.objectContaining({
-				failures: expect.arrayContaining([
-					expect.objectContaining({
-						status: "failed",
-						error: expect.stringContaining("Notion API request failed"),
-					}),
-				]),
+				messageId: batch.messages[0].id,
+				attempts: batch.messages[0].attempts,
+				error: expect.objectContaining({
+					message: expect.stringContaining("Notion API request failed"),
+				}),
 			}),
 		);
+	});
+
+	it("retries the whole batch when notion parent resolution fails", async () => {
+		const fetchMock = createFetchMock(async (input) => {
+			throw new Error(`Unhandled fetch for ${getUrl(input)}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
+
+		await processWebhookBatch(
+			batch,
+			createEnv({
+				NOTION_DATABASE_ID: "",
+			}),
+		);
+
+		expect(batch.retryAll).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].ack).not.toHaveBeenCalled();
 	});
 
 	it("builds readable notion markdown and strips duplicated title heading", () => {
@@ -371,19 +463,22 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const executionCtx = createExecutionContext();
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
 
-		const response = await app.fetch(
-			createRequest(samplePayload),
+		await processWebhookBatch(
+			batch,
 			createEnv({
 				AI: ai,
 				NOTION_DATABASE_ID: `https://www.notion.so/My-DB-${databaseId}?v=test`,
 			}),
-			executionCtx,
 		);
 
-		expect(response.status).toBe(202);
-		await waitForBackgroundTasks(executionCtx);
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});
 
 	it("returns 400 when payload JSON is invalid", async () => {
@@ -423,19 +518,45 @@ function createRequest(body: unknown): Request {
 	});
 }
 
-function createEnv(overrides?: Partial<{
-	AI: { toMarkdown: ReturnType<typeof vi.fn> };
-	NOTION_API_KEY: string;
-	NOTION_DATABASE_ID: string;
-	INOREADER_RULE_NAME: string;
-}>) {
+function createEnv(
+	overrides?: Partial<{
+		AI: { toMarkdown: ReturnType<typeof vi.fn> };
+		inoreader_notion_bridge_queue: Bindings["inoreader_notion_bridge_queue"];
+		NOTION_API_KEY: string;
+		NOTION_DATABASE_ID: string;
+		INOREADER_RULE_NAME: string;
+	}>,
+): Bindings {
 	return {
 		AI: {
 			toMarkdown: vi.fn(),
 		},
+		inoreader_notion_bridge_queue: createQueueBinding(),
 		NOTION_API_KEY: "notion-secret",
 		NOTION_DATABASE_ID: "notion-db",
 		INOREADER_RULE_NAME: "MASKED",
+		...overrides,
+	} as unknown as Bindings;
+}
+
+function createQueueBinding(
+	overrides?: Partial<Bindings["inoreader_notion_bridge_queue"]>,
+): Bindings["inoreader_notion_bridge_queue"] {
+	const send = vi
+		.fn<(message: ParsedInoreaderItem, options?: QueueSendOptions) => Promise<void>>()
+		.mockResolvedValue(undefined);
+	const sendBatch = vi
+		.fn<
+			(
+				messages: Iterable<MessageSendRequest<ParsedInoreaderItem>>,
+				options?: QueueSendBatchOptions,
+			) => Promise<void>
+		>()
+		.mockResolvedValue(undefined);
+
+	return {
+		send,
+		sendBatch,
 		...overrides,
 	};
 }
@@ -445,6 +566,27 @@ function createFetchMock(
 ): MockFetch {
 	const mock = vi.fn(implementation);
 	return mock as unknown as MockFetch;
+}
+
+function createMessageBatch(items: ParsedInoreaderItem[]): QueueBatchStub {
+	const messages = items.map(
+		(item, index) =>
+			({
+				id: `message-${index + 1}`,
+				timestamp: new Date("2026-03-29T01:02:03.000Z"),
+				body: item,
+				attempts: 1,
+				ack: vi.fn<() => void>(),
+				retry: vi.fn<(options?: QueueRetryOptions) => void>(),
+			}) as QueueMessageStub,
+	);
+
+	return {
+		queue: "inoreader-notion-bridge-queue",
+		messages,
+		retryAll: vi.fn<(options?: QueueRetryOptions) => void>(),
+		ackAll: vi.fn<() => void>(),
+	};
 }
 
 function getUrl(input: Parameters<typeof fetch>[0]): string {
@@ -464,21 +606,4 @@ function parseJson(body: BodyInit | null | undefined): any {
 	}
 
 	return JSON.parse(body);
-}
-
-function createExecutionContext(): TestExecutionContext {
-	const waitUntilPromises: Promise<unknown>[] = [];
-	const waitUntil = vi.fn<(promise: Promise<unknown>) => void>((promise) => {
-		waitUntilPromises.push(promise);
-	});
-
-	return {
-		waitUntil,
-		waitUntilPromises,
-		passThroughOnException: vi.fn(),
-	};
-}
-
-async function waitForBackgroundTasks(executionCtx: TestExecutionContext) {
-	await Promise.allSettled(executionCtx.waitUntilPromises);
 }

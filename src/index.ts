@@ -1,4 +1,3 @@
-import type { Context, ExecutionContext } from "hono";
 import { Hono } from "hono";
 
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
@@ -13,13 +12,8 @@ import {
 	resolveNotionParent,
 } from "./notion";
 
-export type Bindings = Env & {};
-
-export type ProcessResult = {
-	title: string;
-	url: string;
-	status: "created" | "updated" | "failed";
-	error?: string;
+export type Bindings = Env & {
+	inoreader_notion_bridge_queue: Queue<ParsedInoreaderItem>;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -42,23 +36,14 @@ app.post("/", async (c) => {
 	}
 
 	const items = parseWebhookPayload(payload);
-
 	if (items.length === 0) {
 		return new Response("Bad Request", { status: 400 });
 	}
 
-	const processing = processWebhook(items, c.env);
-
 	try {
-		const executionCtx = tryGetExecutionContext(c);
-
-		if (executionCtx) {
-			executionCtx.waitUntil(processing);
-		} else {
-			await processing;
-		}
+		await c.env.inoreader_notion_bridge_queue.sendBatch(items.map((item) => ({ body: item })));
 	} catch (error) {
-		console.error("Failed to accept webhook", {
+		console.error("Failed to enqueue webhook items", {
 			error: serializeError(error),
 		});
 
@@ -68,31 +53,37 @@ app.post("/", async (c) => {
 	return new Response(null, { status: 202 });
 });
 
-async function processWebhook(
-	items: ParsedInoreaderItem[],
+export async function processWebhookBatch(
+	batch: MessageBatch<ParsedInoreaderItem>,
 	env: Bindings,
 ): Promise<void> {
 	const startedAt = Date.now();
 
 	try {
 		const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
-		const results: ProcessResult[] = [];
 
-		for (const item of items) {
-			results.push(await processItem(item, env, parent));
-		}
-
-		if (results.some((result) => result.status === "failed")) {
-			console.error("Inoreader webhook completed with failures", {
-				failures: results.filter((result) => result.status === "failed"),
-				durationMs: Date.now() - startedAt,
-			});
+		for (const message of batch.messages) {
+			try {
+				await processItem(message.body, env, parent);
+				message.ack();
+			} catch (error) {
+				console.error("Failed to process queued item", {
+					messageId: message.id,
+					attempts: message.attempts,
+					item: message.body,
+					error: serializeError(error),
+				});
+				message.retry();
+			}
 		}
 	} catch (error) {
-		console.error("Failed to process webhook", {
+		console.error("Failed to process queue batch", {
+			queue: batch.queue,
+			size: batch.messages.length,
 			error: serializeError(error),
 			durationMs: Date.now() - startedAt,
 		});
+		batch.retryAll();
 	}
 }
 
@@ -100,57 +91,24 @@ async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
 	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
-): Promise<ProcessResult> {
-	try {
-		const existingPageId = await findExistingNotionPageByUrl(
-			fetch,
-			env.NOTION_API_KEY,
-			parent,
-			item.url,
-		);
-		const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
-		const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
-		const status = await createOrUpdateNotionPage(
-			fetch,
-			env.NOTION_API_KEY,
-			parent,
-			item,
-			notionMarkdown,
-			existingPageId,
-		);
+): Promise<void> {
+	const existingPageId = await findExistingNotionPageByUrl(
+		fetch,
+		env.NOTION_API_KEY,
+		parent,
+		item.url,
+	);
+	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
+	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
 
-		return {
-			title: item.title,
-			url: item.url,
-			status,
-		};
-	} catch (error) {
-		console.error("Failed to process item", {
-			item,
-			error: serializeError(error),
-		});
-
-		return {
-			title: item.title,
-			url: item.url,
-			status: "failed",
-			error: toErrorMessage(error),
-		};
-	}
-}
-
-function tryGetExecutionContext(
-	context: Context<{ Bindings: Bindings }>,
-): ExecutionContext | undefined {
-	try {
-		return context.executionCtx;
-	} catch {
-		return undefined;
-	}
-}
-
-function toErrorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	await createOrUpdateNotionPage(
+		fetch,
+		env.NOTION_API_KEY,
+		parent,
+		item,
+		notionMarkdown,
+		existingPageId,
+	);
 }
 
 function serializeError(error: unknown) {
@@ -182,4 +140,5 @@ export { app };
 
 export default {
 	fetch: app.fetch,
+	queue: processWebhookBatch,
 };
