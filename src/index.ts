@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context, ExecutionContext } from "hono";
 
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import {
@@ -26,6 +27,13 @@ export type ProcessResult = {
 	error?: string;
 };
 
+type ProcessSummary = {
+	created: number;
+	updated: number;
+	failed: number;
+	results: ProcessResult[];
+};
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use("*", async (c, next) => {
@@ -47,28 +55,96 @@ app.post("/", async (c) => {
 		);
 	}
 
-	const parent = await resolveNotionParent(fetch, c.env.NOTION_API_KEY, c.env);
-	const results: ProcessResult[] = [];
+	const requestId = c.req.header("cf-ray") ?? crypto.randomUUID();
+	console.log("Accepted Inoreader webhook", {
+		requestId,
+		itemCount: items.length,
+		ruleName: c.req.header("x-inoreader-rule-name"),
+		matchesToday: c.req.header("x-inoreader-rule-matches-today"),
+		matchesTotal: c.req.header("x-inoreader-rule-matches-total"),
+	});
 
-	for (const item of items) {
-		results.push(await processItem(item, c.env, parent));
+	const processing = processWebhook(items, c.env, requestId);
+	const executionCtx = tryGetExecutionContext(c);
+
+	if (executionCtx) {
+		executionCtx.waitUntil(processing);
+
+		return Response.json({
+			success: true,
+			accepted: items.length,
+			processing: "async",
+			requestId,
+		});
 	}
 
-	const created = results.filter((result) => result.status === "created").length;
-	const updated = results.filter((result) => result.status === "updated").length;
-	const failed = results.filter((result) => result.status === "failed").length;
-
+	const summary = await processing;
 	return Response.json(
 		{
-			success: failed === 0,
-			created,
-			updated,
-			failed,
-			results,
+			success: summary.failed === 0,
+			created: summary.created,
+			updated: summary.updated,
+			failed: summary.failed,
+			results: summary.results,
+			requestId,
 		},
-		{ status: failed === 0 ? 200 : 500 },
+		{ status: summary.failed === 0 ? 200 : 500 },
 	);
 });
+
+async function processWebhook(
+	items: ParsedInoreaderItem[],
+	env: Bindings,
+	requestId: string,
+): Promise<ProcessSummary> {
+	const startedAt = Date.now();
+
+	try {
+		const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
+		const results: ProcessResult[] = [];
+
+		for (const item of items) {
+			results.push(await processItem(item, env, parent));
+		}
+
+		const summary = summarizeResults(results);
+		console.log("Processed Inoreader webhook", {
+			requestId,
+			itemCount: items.length,
+			created: summary.created,
+			updated: summary.updated,
+			failed: summary.failed,
+			durationMs: Date.now() - startedAt,
+		});
+
+		if (summary.failed > 0) {
+			console.error("Inoreader webhook completed with failures", {
+				requestId,
+				failures: summary.results.filter((result) => result.status === "failed"),
+			});
+		}
+
+		return summary;
+	} catch (error) {
+		console.error("Failed to process webhook", {
+			requestId,
+			error: serializeError(error),
+			durationMs: Date.now() - startedAt,
+		});
+
+		return {
+			created: 0,
+			updated: 0,
+			failed: items.length,
+			results: items.map((item) => ({
+				title: item.title,
+				url: item.url,
+				status: "failed",
+				error: toErrorMessage(error),
+			})),
+		};
+	}
+}
 
 async function processItem(
 	item: ParsedInoreaderItem,
@@ -99,7 +175,10 @@ async function processItem(
 			status,
 		};
 	} catch (error) {
-		console.error("Failed to process item", { item, error });
+		console.error("Failed to process item", {
+			item,
+			error: serializeError(error),
+		});
 
 		return {
 			title: item.title,
@@ -110,8 +189,52 @@ async function processItem(
 	}
 }
 
+function summarizeResults(results: ProcessResult[]): ProcessSummary {
+	return {
+		created: results.filter((result) => result.status === "created").length,
+		updated: results.filter((result) => result.status === "updated").length,
+		failed: results.filter((result) => result.status === "failed").length,
+		results,
+	};
+}
+
+function tryGetExecutionContext(
+	context: Context<{ Bindings: Bindings }>,
+): ExecutionContext | undefined {
+	try {
+		return context.executionCtx;
+	} catch {
+		return undefined;
+	}
+}
+
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function serializeError(error: unknown) {
+	if (error instanceof Error) {
+		const serialized: Record<string, unknown> = {
+			name: error.name,
+			message: error.message,
+		};
+
+		if (error.stack) {
+			serialized.stack = error.stack;
+		}
+
+		for (const key of ["status", "path", "notionVersion", "body"] as const) {
+			if (key in error) {
+				serialized[key] = (error as unknown as Record<string, unknown>)[key];
+			}
+		}
+
+		return serialized;
+	}
+
+	return {
+		message: String(error),
+	};
 }
 
 export { app };

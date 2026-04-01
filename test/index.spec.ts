@@ -9,10 +9,17 @@ type MockFetch = typeof fetch & {
 	mock: ReturnType<typeof vi.fn>;
 };
 
+type TestExecutionContext = ExecutionContext & {
+	waitUntilPromises: Promise<unknown>[];
+	waitUntil: ReturnType<typeof vi.fn<(promise: Promise<unknown>) => void>>;
+	passThroughOnException: ReturnType<typeof vi.fn>;
+};
+
 describe("inoreader notion bridge", () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-03-29T01:02:03.000Z"));
+		vi.spyOn(console, "log").mockImplementation(() => {});
 		vi.spyOn(console, "error").mockImplementation(() => {});
 	});
 
@@ -29,7 +36,6 @@ describe("inoreader notion bridge", () => {
 				headers: { "Content-Type": "application/json" },
 			}),
 			createEnv(),
-			{} as ExecutionContext,
 		);
 
 		expect(response.status).toBe(403);
@@ -87,26 +93,27 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
+		const executionCtx = createExecutionContext();
 
 		const response = await app.fetch(
 			createRequest(payload),
 			createEnv({ AI: ai }),
-			{} as ExecutionContext,
+			executionCtx,
 		);
 		const body = (await response.json()) as {
 			success: boolean;
-			created: number;
-			updated: number;
-			failed: number;
+			accepted: number;
+			processing: string;
 		};
 
 		expect(response.status).toBe(200);
 		expect(body).toMatchObject({
 			success: true,
-			created: 2,
-			updated: 0,
-			failed: 0,
+			accepted: 2,
+			processing: "async",
 		});
+		await waitForBackgroundTasks(executionCtx);
+		expect(response.status).toBe(200);
 		expect(ai.toMarkdown).toHaveBeenCalledTimes(2);
 		expect(fetchMock).toHaveBeenCalledWith(
 			"https://example.com/",
@@ -162,14 +169,16 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
+		const executionCtx = createExecutionContext();
 
 		const response = await app.fetch(
 			createRequest(samplePayload),
 			createEnv({ AI: ai }),
-			{} as ExecutionContext,
+			executionCtx,
 		);
 
 		expect(response.status).toBe(200);
+		await waitForBackgroundTasks(executionCtx);
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
 		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
 	});
@@ -223,20 +232,18 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
+		const executionCtx = createExecutionContext();
 
 		const response = await app.fetch(
 			createRequest(samplePayload),
 			createEnv({ AI: ai }),
-			{} as ExecutionContext,
+			executionCtx,
 		);
-		const body = (await response.json()) as {
-			created: number;
-			updated: number;
-			failed: number;
-		};
+		const body = (await response.json()) as { success: boolean; accepted: number };
 
 		expect(response.status).toBe(200);
-		expect(body).toMatchObject({ created: 0, updated: 1, failed: 0 });
+		expect(body).toMatchObject({ success: true, accepted: 1 });
+		await waitForBackgroundTasks(executionCtx);
 		expect(fetchMock).not.toHaveBeenCalledWith(
 			"https://api.notion.com/v1/pages",
 			expect.anything(),
@@ -294,30 +301,37 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
+		const executionCtx = createExecutionContext();
 
 		const response = await app.fetch(
 			createRequest(payload),
 			createEnv({ AI: ai }),
-			{} as ExecutionContext,
+			executionCtx,
 		);
 		const body = (await response.json()) as {
 			success: boolean;
-			created: number;
-			updated: number;
-			failed: number;
-			results: Array<{ status: string; error?: string }>;
+			accepted: number;
+			requestId: string;
 		};
 
-		expect(response.status).toBe(500);
+		expect(response.status).toBe(200);
 		expect(body).toMatchObject({
-			success: false,
-			created: 1,
-			updated: 0,
-			failed: 1,
+			success: true,
+			accepted: 2,
 		});
-		expect(body.results[0].status).toBe("failed");
-		expect(body.results[0].error).toContain("Notion API request failed");
-		expect(body.results[1].status).toBe("created");
+		await waitForBackgroundTasks(executionCtx);
+		expect(console.error).toHaveBeenCalledWith(
+			"Inoreader webhook completed with failures",
+			expect.objectContaining({
+				requestId: body.requestId,
+				failures: expect.arrayContaining([
+					expect.objectContaining({
+						status: "failed",
+						error: expect.stringContaining("Notion API request failed"),
+					}),
+				]),
+			}),
+		);
 	});
 
 	it("builds readable notion markdown and strips duplicated title heading", () => {
@@ -381,6 +395,7 @@ describe("inoreader notion bridge", () => {
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
+		const executionCtx = createExecutionContext();
 
 		const response = await app.fetch(
 			createRequest(samplePayload),
@@ -389,12 +404,13 @@ describe("inoreader notion bridge", () => {
 				NOTION_DATA_SOURCE_ID: undefined,
 				NOTION_DATABASE_ID: `https://www.notion.so/My-DB-${databaseId}?v=test`,
 			}),
-			{} as ExecutionContext,
+			executionCtx,
 		);
-		const body = (await response.json()) as { success: boolean; created: number; failed: number };
+		const body = (await response.json()) as { success: boolean; accepted: number };
 
 		expect(response.status).toBe(200);
-		expect(body).toMatchObject({ success: true, created: 1, failed: 0 });
+		expect(body).toMatchObject({ success: true, accepted: 1 });
+		await waitForBackgroundTasks(executionCtx);
 	});
 });
 
@@ -451,4 +467,21 @@ function parseJson(body: BodyInit | null | undefined): any {
 	}
 
 	return JSON.parse(body);
+}
+
+function createExecutionContext(): TestExecutionContext {
+	const waitUntilPromises: Promise<unknown>[] = [];
+	const waitUntil = vi.fn<(promise: Promise<unknown>) => void>((promise) => {
+		waitUntilPromises.push(promise);
+	});
+
+	return {
+		waitUntil,
+		waitUntilPromises,
+		passThroughOnException: vi.fn(),
+	};
+}
+
+async function waitForBackgroundTasks(executionCtx: TestExecutionContext) {
+	await Promise.allSettled(executionCtx.waitUntilPromises);
 }
