@@ -1,28 +1,24 @@
-export type InoreaderWebhookLink = {
+export type StreamContentsLink = {
 	href: string;
-	type?: string;
 };
 
-export type InoreaderWebhookRequestBody = {
-	rule?: {
-		name?: string;
-	};
-	items?: InoreaderWebhookItem[];
-};
-
-export type InoreaderWebhookItem = {
-	title?: string;
+export type StreamContentsItem = {
 	categories?: string[];
-	canonical?: InoreaderWebhookLink[];
-	alternate?: InoreaderWebhookLink[];
+	title?: string;
+	published?: number;
+	canonical?: StreamContentsLink[];
+	alternate?: StreamContentsLink[];
 	summary?: {
 		content?: string;
 	};
 	author?: string;
-	published?: number;
 	origin?: {
 		title?: string;
 	};
+};
+
+export type StreamContents = {
+	items?: StreamContentsItem[];
 };
 
 export type ParsedInoreaderItem = {
@@ -34,7 +30,10 @@ export type ParsedInoreaderItem = {
 	feedTitle?: string;
 };
 
-export function parseWebhookPayload(body: InoreaderWebhookRequestBody): ParsedInoreaderItem[] {
+export function parseWebhookPayload(body: StreamContents): ParsedInoreaderItem[] {
+	// Logging for traceability in Cloudflare logs
+	console.log(body);
+
 	const items = body.items ?? [];
 
 	return items.flatMap((item) => {
@@ -58,7 +57,7 @@ export function parseWebhookPayload(body: InoreaderWebhookRequestBody): ParsedIn
 	});
 }
 
-function firstValidLink(links?: InoreaderWebhookLink[]): string | undefined {
+function firstValidLink(links?: StreamContentsLink[]): string | undefined {
 	for (const link of links ?? []) {
 		const href = link.href?.trim();
 		if (!href) {

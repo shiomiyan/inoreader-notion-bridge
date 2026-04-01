@@ -1,11 +1,7 @@
 import { Hono } from "hono";
 
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
-import {
-	type InoreaderWebhookRequestBody,
-	type ParsedInoreaderItem,
-	parseWebhookPayload,
-} from "./inoreader";
+import { type ParsedInoreaderItem, type StreamContents, parseWebhookPayload } from "./inoreader";
 import {
 	createOrUpdateNotionPage,
 	findExistingNotionPageByUrl,
@@ -27,10 +23,10 @@ app.use("*", async (c, next) => {
 });
 
 app.post("/", async (c) => {
-	let payload: InoreaderWebhookRequestBody;
+	let payload: StreamContents;
 
 	try {
-		payload = await c.req.json<InoreaderWebhookRequestBody>();
+		payload = await c.req.json<StreamContents>();
 	} catch {
 		return new Response("Bad Request", { status: 400 });
 	}

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildNotionMarkdown } from "../src/article";
 import { app, processWebhookBatch } from "../src/index";
 import type { Bindings } from "../src/index";
-import type { InoreaderWebhookRequestBody, ParsedInoreaderItem } from "../src/inoreader";
+import type { ParsedInoreaderItem, StreamContents } from "../src/inoreader";
 import samplePayload from "./inoreader.req.json";
 
 type MockFetch = typeof fetch & {
@@ -47,7 +47,7 @@ describe("inoreader notion bridge", () => {
 	});
 
 	it("returns 202 and enqueues valid items", async () => {
-		const payload: InoreaderWebhookRequestBody = {
+		const payload: StreamContents = {
 			...samplePayload,
 			items: [
 				samplePayload.items[0],
