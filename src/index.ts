@@ -5,6 +5,7 @@ import { type ParsedInoreaderItem, type StreamContents, parseWebhookPayload } fr
 import {
 	createOrUpdateNotionPage,
 	findExistingNotionPageByUrl,
+	type NotionWriteResult,
 	resolveNotionParent,
 } from "./notion";
 
@@ -55,16 +56,24 @@ export async function processWebhookBatch(
 ): Promise<void> {
 	const startedAt = Date.now();
 
-	try {
-		const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
+		try {
+			const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
 
-		for (const message of batch.messages) {
-			try {
-				await processItem(message.body, env, parent);
-				message.ack();
-			} catch (error) {
-				console.error("Failed to process queued item", {
-					messageId: message.id,
+			for (const message of batch.messages) {
+				try {
+					const result = await processItem(message.body, env, parent);
+					if (result.usedWafFallback) {
+						console.error("Notion request blocked by Cloudflare WAF; saved fallback page", {
+							messageId: message.id,
+							attempts: message.attempts,
+							item: message.body,
+							wafBlock: result.wafBlock,
+						});
+					}
+					message.ack();
+				} catch (error) {
+					console.error("Failed to process queued item", {
+						messageId: message.id,
 					attempts: message.attempts,
 					item: message.body,
 					error: serializeError(error),
@@ -87,7 +96,7 @@ async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
 	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
-): Promise<void> {
+): Promise<NotionWriteResult> {
 	const existingPageId = await findExistingNotionPageByUrl(
 		fetch,
 		env.NOTION_API_KEY,
@@ -97,7 +106,7 @@ async function processItem(
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
 	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
 
-	await createOrUpdateNotionPage(
+	return await createOrUpdateNotionPage(
 		fetch,
 		env.NOTION_API_KEY,
 		parent,
@@ -118,7 +127,7 @@ function serializeError(error: unknown) {
 			serialized.stack = error.stack;
 		}
 
-		for (const key of ["status", "path", "notionVersion", "body"] as const) {
+		for (const key of ["status", "path", "notionVersion", "body", "wafBlocked", "cloudflareRayId"] as const) {
 			if (key in error) {
 				serialized[key] = (error as unknown as Record<string, unknown>)[key];
 			}

@@ -21,6 +21,17 @@ type QueryResult = {
 
 type NotionParentEnv = Pick<Env, "NOTION_DATABASE_ID">;
 
+export type NotionWriteResult = {
+	outcome: "created" | "updated";
+	usedWafFallback: boolean;
+	wafBlock?: {
+		status: number;
+		path: string;
+		notionVersion: string;
+		cloudflareRayId?: string;
+	};
+};
+
 export class NotionApiError extends Error {
 	constructor(
 		message: string,
@@ -28,6 +39,8 @@ export class NotionApiError extends Error {
 		readonly path: string,
 		readonly notionVersion: string,
 		readonly body?: unknown,
+		readonly wafBlocked: boolean = false,
+		readonly cloudflareRayId?: string,
 	) {
 		super(message);
 		this.name = "NotionApiError";
@@ -58,7 +71,7 @@ export async function findExistingNotionPageByUrl(
 	try {
 		const result = await queryPages(fetchImpl, notionApiKey, parent, {
 			filter: {
-				property: "URL",
+				property: "url",
 				url: {
 					equals: url,
 				},
@@ -100,21 +113,45 @@ export async function createOrUpdateNotionPage(
 	item: ParsedInoreaderItem,
 	markdown: string,
 	existingPageId: string | null,
-): Promise<"created" | "updated"> {
-	if (!existingPageId) {
-		await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
-			method: "POST",
-			body: JSON.stringify({
-				parent:
-					parent.type === "data_source"
-						? { data_source_id: parent.id }
-						: { database_id: parent.id },
-				properties: buildPageProperties(item),
-				markdown,
-			}),
-		});
+): Promise<NotionWriteResult> {
+	const updatedAt = new Date().toISOString();
 
-		return "created";
+	if (!existingPageId) {
+		try {
+			await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
+				method: "POST",
+				body: JSON.stringify({
+					parent:
+						parent.type === "data_source"
+							? { data_source_id: parent.id }
+							: { database_id: parent.id },
+					properties: buildPageProperties(item, updatedAt),
+					markdown,
+				}),
+			});
+		} catch (error) {
+			if (!isCloudflareWafBlock(error)) {
+				throw error;
+			}
+
+			await createFallbackNotionPage(fetchImpl, notionApiKey, parent, item, updatedAt);
+
+			return {
+				outcome: "created",
+				usedWafFallback: true,
+				wafBlock: {
+					status: error.status,
+					path: error.path,
+					notionVersion: error.notionVersion,
+					cloudflareRayId: error.cloudflareRayId,
+				},
+			};
+		}
+
+		return {
+			outcome: "created",
+			usedWafFallback: false,
+		};
 	}
 
 	await notionRequest(
@@ -125,28 +162,48 @@ export async function createOrUpdateNotionPage(
 		{
 			method: "PATCH",
 			body: JSON.stringify({
-				properties: buildPageProperties(item),
+				properties: buildPageProperties(item, updatedAt),
 			}),
 		},
 	);
 
-	await notionRequest(
-		fetchImpl,
-		notionApiKey,
-		`/v1/pages/${existingPageId}/markdown`,
-		NOTION_CONTENT_VERSION,
-		{
-			method: "PATCH",
-			body: JSON.stringify({
-				type: "replace_content",
-				replace_content: {
-					new_str: markdown,
-				},
-			}),
-		},
-	);
+	try {
+		await notionRequest(
+			fetchImpl,
+			notionApiKey,
+			`/v1/pages/${existingPageId}/markdown`,
+			NOTION_CONTENT_VERSION,
+			{
+				method: "PATCH",
+				body: JSON.stringify({
+					type: "replace_content",
+					replace_content: {
+						new_str: markdown,
+					},
+				}),
+			},
+		);
+	} catch (error) {
+		if (!isCloudflareWafBlock(error)) {
+			throw error;
+		}
 
-	return "updated";
+		return {
+			outcome: "updated",
+			usedWafFallback: true,
+			wafBlock: {
+				status: error.status,
+				path: error.path,
+				notionVersion: error.notionVersion,
+				cloudflareRayId: error.cloudflareRayId,
+			},
+		};
+	}
+
+	return {
+		outcome: "updated",
+		usedWafFallback: false,
+	};
 }
 
 async function queryPages(
@@ -179,12 +236,15 @@ async function notionRequest<T>(
 			Authorization: `Bearer ${notionApiKey}`,
 			"Content-Type": "application/json",
 			"Notion-Version": notionVersion,
+			"User-Agent": "Inoreader-Notion-Bridge/1.0",
 			...(init.headers ?? {}),
 		},
 	});
 
 	const text = await response.text();
 	const body = text ? safeJsonParse(text) : undefined;
+	const cloudflareRayId = response.headers.get("cf-ray");
+	const wafBlocked = isCloudflareWafResponse(response.status, text, cloudflareRayId);
 
 	if (!response.ok) {
 		throw new NotionApiError(
@@ -193,10 +253,16 @@ async function notionRequest<T>(
 			path,
 			notionVersion,
 			body,
+			wafBlocked,
+			cloudflareRayId ?? undefined,
 		);
 	}
 
 	return body as T;
+}
+
+export function isCloudflareWafBlock(error: unknown): error is NotionApiError {
+	return error instanceof NotionApiError && error.wafBlocked;
 }
 
 async function ensureDataSourceParent(
@@ -249,9 +315,29 @@ async function discoverDataSourceParent(
 	};
 }
 
-function buildPageProperties(item: ParsedInoreaderItem) {
+async function createFallbackNotionPage(
+	fetchImpl: typeof fetch,
+	notionApiKey: string,
+	parent: NotionParent,
+	item: ParsedInoreaderItem,
+	updatedAt: string,
+): Promise<void> {
+	await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
+		method: "POST",
+		body: JSON.stringify({
+			parent:
+				parent.type === "data_source"
+					? { data_source_id: parent.id }
+					: { database_id: parent.id },
+			properties: buildPageProperties(item, updatedAt),
+			markdown: buildWafFallbackMarkdown(),
+		}),
+	});
+}
+
+function buildPageProperties(item: ParsedInoreaderItem, updatedAt: string) {
 	return {
-		Title: {
+		title: {
 			title: [
 				{
 					type: "text",
@@ -262,8 +348,13 @@ function buildPageProperties(item: ParsedInoreaderItem) {
 				},
 			],
 		},
-		URL: {
+		url: {
 			url: item.url,
+		},
+		updated: {
+			date: {
+				start: updatedAt,
+			},
 		},
 	};
 }
@@ -278,7 +369,7 @@ function readUrlProperty(page: Record<string, unknown>): string | undefined {
 		return undefined;
 	}
 
-	const urlProperty = (properties as Record<string, unknown>).URL;
+	const urlProperty = (properties as Record<string, unknown>).url;
 	if (!urlProperty || typeof urlProperty !== "object") {
 		return undefined;
 	}
@@ -311,6 +402,29 @@ function normalizeNotionId(value: string): string {
 	}
 
 	return trimmed;
+}
+
+function buildWafFallbackMarkdown(): string {
+	return "本文保存が Cloudflare WAF によりブロックされました。";
+}
+
+function isCloudflareWafResponse(
+	status: number,
+	bodyText: string,
+	cloudflareRayId: string | null,
+): boolean {
+	if (status !== 403) {
+		return false;
+	}
+
+	if (!cloudflareRayId) {
+		return false;
+	}
+
+	return (
+		bodyText.includes("Attention Required! | Cloudflare") ||
+		bodyText.includes("Sorry, you have been blocked")
+	);
 }
 
 function looksLikeWrongParentId(error: unknown): error is NotionApiError {
