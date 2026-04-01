@@ -47,29 +47,29 @@ export class NotionApiError extends Error {
 	}
 }
 
-export async function resolveNotionParent(
+export async function resolveParent(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	env: NotionParentEnv,
 ): Promise<NotionParent> {
 	if (env.NOTION_DATABASE_ID) {
-		return await ensureDataSourceParent(fetchImpl, notionApiKey, {
+		return await resolveDataSourceParent(fetchImpl, notionApiKey, {
 			type: "database",
-			id: normalizeNotionId(env.NOTION_DATABASE_ID),
+			id: env.NOTION_DATABASE_ID,
 		});
 	}
 
 	throw new Error("NOTION_DATABASE_ID is required");
 }
 
-export async function findExistingNotionPageByUrl(
+export async function getPageIdByUrl(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	parent: NotionParent,
 	url: string,
 ): Promise<string | null> {
 	try {
-		const result = await queryPages(fetchImpl, notionApiKey, parent, {
+		const result = await query(fetchImpl, notionApiKey, parent, {
 			filter: {
 				property: "url",
 				url: {
@@ -89,13 +89,13 @@ export async function findExistingNotionPageByUrl(
 	let nextCursor: string | null | undefined;
 
 	do {
-		const result = await queryPages(fetchImpl, notionApiKey, parent, {
+		const result = await query(fetchImpl, notionApiKey, parent, {
 			page_size: 100,
 			start_cursor: nextCursor ?? undefined,
 		});
 
 		for (const page of result.results) {
-			if (readUrlProperty(page) === url) {
+			if (getUrl(page) === url) {
 				return getPageId(page) ?? null;
 			}
 		}
@@ -106,7 +106,7 @@ export async function findExistingNotionPageByUrl(
 	return null;
 }
 
-export async function createOrUpdateNotionPage(
+export async function upsertPage(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	parent: NotionParent,
@@ -118,14 +118,14 @@ export async function createOrUpdateNotionPage(
 
 	if (!existingPageId) {
 		try {
-			await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
+			await request(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
 				method: "POST",
 				body: JSON.stringify({
 					parent:
 						parent.type === "data_source"
 							? { data_source_id: parent.id }
 							: { database_id: parent.id },
-					properties: buildPageProperties(item, updatedAt),
+					properties: buildProperties(item, updatedAt),
 					markdown,
 				}),
 			});
@@ -134,7 +134,7 @@ export async function createOrUpdateNotionPage(
 				throw error;
 			}
 
-			await createFallbackNotionPage(fetchImpl, notionApiKey, parent, item, updatedAt);
+			await createFallbackPage(fetchImpl, notionApiKey, parent, item, updatedAt);
 
 			return {
 				outcome: "created",
@@ -154,7 +154,7 @@ export async function createOrUpdateNotionPage(
 		};
 	}
 
-	await notionRequest(
+	await request(
 		fetchImpl,
 		notionApiKey,
 		`/v1/pages/${existingPageId}`,
@@ -162,13 +162,13 @@ export async function createOrUpdateNotionPage(
 		{
 			method: "PATCH",
 			body: JSON.stringify({
-				properties: buildPageProperties(item, updatedAt),
+				properties: buildProperties(item, updatedAt),
 			}),
 		},
 	);
 
 	try {
-		await notionRequest(
+		await request(
 			fetchImpl,
 			notionApiKey,
 			`/v1/pages/${existingPageId}/markdown`,
@@ -206,7 +206,7 @@ export async function createOrUpdateNotionPage(
 	};
 }
 
-async function queryPages(
+async function query(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	parent: NotionParent,
@@ -217,13 +217,13 @@ async function queryPages(
 			? `/v1/data_sources/${parent.id}/query`
 			: `/v1/databases/${parent.id}/query`;
 
-	return await notionRequest<QueryResult>(fetchImpl, notionApiKey, path, NOTION_QUERY_VERSION, {
+	return await request<QueryResult>(fetchImpl, notionApiKey, path, NOTION_QUERY_VERSION, {
 		method: "POST",
 		body: JSON.stringify(body),
 	});
 }
 
-async function notionRequest<T>(
+async function request<T>(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	path: string,
@@ -265,17 +265,17 @@ export function isCloudflareWafBlock(error: unknown): error is NotionApiError {
 	return error instanceof NotionApiError && error.wafBlocked;
 }
 
-async function ensureDataSourceParent(
+async function resolveDataSourceParent(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	parent: NotionParent,
 ): Promise<NotionParent> {
 	if (parent.type === "database") {
-		return await discoverDataSourceParent(fetchImpl, notionApiKey, parent.id);
+		return await getPrimaryDataSource(fetchImpl, notionApiKey, parent.id);
 	}
 
 	try {
-		await notionRequest(
+		await request(
 			fetchImpl,
 			notionApiKey,
 			`/v1/data_sources/${parent.id}`,
@@ -285,20 +285,20 @@ async function ensureDataSourceParent(
 
 		return parent;
 	} catch (error) {
-		if (!looksLikeWrongParentId(error)) {
+		if (!isWrongParentError(error)) {
 			throw error;
 		}
 
-		return await discoverDataSourceParent(fetchImpl, notionApiKey, parent.id);
+		return await getPrimaryDataSource(fetchImpl, notionApiKey, parent.id);
 	}
 }
 
-async function discoverDataSourceParent(
+async function getPrimaryDataSource(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	databaseId: string,
 ): Promise<NotionParent> {
-	const database = await notionRequest<{
+	const database = await request<{
 		data_sources?: Array<{ id?: string }>;
 	}>(fetchImpl, notionApiKey, `/v1/databases/${databaseId}`, NOTION_QUERY_VERSION, {
 		method: "GET",
@@ -311,31 +311,31 @@ async function discoverDataSourceParent(
 
 	return {
 		type: "data_source",
-		id: normalizeNotionId(dataSourceId),
+		id: dataSourceId,
 	};
 }
 
-async function createFallbackNotionPage(
+async function createFallbackPage(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	parent: NotionParent,
 	item: ParsedInoreaderItem,
 	updatedAt: string,
 ): Promise<void> {
-	await notionRequest(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
+	await request(fetchImpl, notionApiKey, "/v1/pages", NOTION_CONTENT_VERSION, {
 		method: "POST",
 		body: JSON.stringify({
 			parent:
 				parent.type === "data_source"
 					? { data_source_id: parent.id }
 					: { database_id: parent.id },
-			properties: buildPageProperties(item, updatedAt),
-			markdown: buildWafFallbackMarkdown(),
+			properties: buildProperties(item, updatedAt),
+			markdown: "本文保存が Cloudflare WAF によりブロックされました。",
 		}),
 	});
 }
 
-function buildPageProperties(item: ParsedInoreaderItem, updatedAt: string) {
+function buildProperties(item: ParsedInoreaderItem, updatedAt: string) {
 	return {
 		title: {
 			title: [
@@ -363,7 +363,7 @@ function getPageId(page: Record<string, unknown> | undefined): string | undefine
 	return typeof page?.id === "string" ? page.id : undefined;
 }
 
-function readUrlProperty(page: Record<string, unknown>): string | undefined {
+function getUrl(page: Record<string, unknown>): string | undefined {
 	const properties = page.properties;
 	if (!properties || typeof properties !== "object") {
 		return undefined;
@@ -387,27 +387,6 @@ function safeJsonParse(value: string): unknown {
 	}
 }
 
-function normalizeNotionId(value: string): string {
-	const trimmed = value.trim();
-	const directMatch = trimmed.match(/^[0-9a-fA-F-]{32,36}$/);
-	if (directMatch) {
-		return trimmed;
-	}
-
-	const extracted = trimmed.match(
-		/([0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})/,
-	);
-	if (extracted) {
-		return extracted[1];
-	}
-
-	return trimmed;
-}
-
-function buildWafFallbackMarkdown(): string {
-	return "本文保存が Cloudflare WAF によりブロックされました。";
-}
-
 function isCloudflareWafResponse(
 	status: number,
 	bodyText: string,
@@ -427,7 +406,7 @@ function isCloudflareWafResponse(
 	);
 }
 
-function looksLikeWrongParentId(error: unknown): error is NotionApiError {
+function isWrongParentError(error: unknown): error is NotionApiError {
 	if (!(error instanceof NotionApiError)) {
 		return false;
 	}

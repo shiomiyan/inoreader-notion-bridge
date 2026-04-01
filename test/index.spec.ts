@@ -255,7 +255,7 @@ describe("inoreader notion bridge", () => {
 						{
 							id: "page-123",
 							properties: {
-								URL: { url: "https://example.com/" },
+								url: { url: "https://example.com/" },
 							},
 						},
 					],
@@ -334,7 +334,7 @@ describe("inoreader notion bridge", () => {
 
 			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
 				const body = parseJson(init?.body);
-				if (body?.properties?.Title?.title?.[0]?.text?.content === "テストテストテスト") {
+				if (body?.properties?.title?.title?.[0]?.text?.content === "テストテストテスト") {
 					return new Response(JSON.stringify({ message: "failure" }), { status: 500 });
 				}
 
@@ -373,6 +373,206 @@ describe("inoreader notion bridge", () => {
 				attempts: batch.messages[0].attempts,
 				error: expect.objectContaining({
 					message: expect.stringContaining("Notion API request failed"),
+				}),
+			}),
+		);
+	});
+
+	it("falls back to a title-only page when page creation is blocked by Cloudflare WAF", async () => {
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			}
+
+			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
+				return jsonResponse({ results: [], has_more: false, next_cursor: null });
+			}
+
+			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
+				const body = parseJson(init?.body);
+				if (body?.markdown?.includes("本文A")) {
+					return new Response(
+						'<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-create-123</strong></p></body></html>',
+						{
+							status: 403,
+							headers: {
+								"content-type": "text/html",
+								"cf-ray": "ray-create-123",
+							},
+						},
+					);
+				}
+
+				expect(body.properties).toEqual({
+					title: {
+						title: [
+							{
+								type: "text",
+								text: {
+									content: "テストテストテスト",
+									link: { url: "https://example.com/" },
+								},
+							},
+						],
+					},
+					url: {
+						url: "https://example.com/",
+					},
+					updated: {
+						date: {
+							start: "2026-03-29T01:02:03.000Z",
+						},
+					},
+				});
+				expect(body.markdown).toBe("本文保存が Cloudflare WAF によりブロックされました。");
+				return jsonResponse({ id: "created-page" });
+			}
+
+			if (url === "https://example.com/") {
+				return new Response("<html><body><p>Article body</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# テストテストテスト\n\n本文A",
+			}),
+		};
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
+
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
+
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].retry).not.toHaveBeenCalled();
+		expect(console.error).toHaveBeenCalledWith(
+			"Notion request blocked by Cloudflare WAF; saved fallback page",
+			expect.objectContaining({
+				messageId: batch.messages[0].id,
+				attempts: batch.messages[0].attempts,
+				wafBlock: expect.objectContaining({
+					status: 403,
+					path: "/v1/pages",
+					notionVersion: "2026-03-11",
+					cloudflareRayId: "ray-create-123",
+				}),
+			}),
+		);
+	});
+
+	it("keeps existing markdown and only updates lowercase properties when markdown update is blocked by Cloudflare WAF", async () => {
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
+				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			}
+
+			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
+				return jsonResponse({
+					results: [
+						{
+							id: "page-123",
+							properties: {
+								url: { url: "https://example.com/" },
+							},
+						},
+					],
+					has_more: false,
+					next_cursor: null,
+				});
+			}
+
+			if (url === "https://api.notion.com/v1/pages/page-123" && init?.method === "PATCH") {
+				const body = parseJson(init?.body);
+				expect(body.properties).toEqual({
+					title: {
+						title: [
+							{
+								type: "text",
+								text: {
+									content: "テストテストテスト",
+									link: { url: "https://example.com/" },
+								},
+							},
+						],
+					},
+					url: {
+						url: "https://example.com/",
+					},
+					updated: {
+						date: {
+							start: "2026-03-29T01:02:03.000Z",
+						},
+					},
+				});
+				return jsonResponse({ id: "page-123" });
+			}
+
+			if (url === "https://api.notion.com/v1/pages/page-123/markdown" && init?.method === "PATCH") {
+				return new Response(
+					'<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-update-456</strong></p></body></html>',
+					{
+						status: 403,
+						headers: {
+							"content-type": "text/html",
+							"cf-ray": "ray-update-456",
+						},
+					},
+				);
+			}
+
+			if (url === "https://example.com/") {
+				return new Response("<html><body><p>Article body</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# テストテストテスト\n\n本文A",
+			}),
+		};
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
+
+		await processWebhookBatch(batch, createEnv({ AI: ai }));
+
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].retry).not.toHaveBeenCalled();
+		expect(console.error).toHaveBeenCalledWith(
+			"Notion request blocked by Cloudflare WAF; saved fallback page",
+			expect.objectContaining({
+				wafBlock: expect.objectContaining({
+					status: 403,
+					path: "/v1/pages/page-123/markdown",
+					notionVersion: "2026-03-11",
+					cloudflareRayId: "ray-update-456",
 				}),
 			}),
 		);
@@ -474,7 +674,7 @@ describe("inoreader notion bridge", () => {
 			batch,
 			createEnv({
 				AI: ai,
-				NOTION_DATABASE_ID: `https://www.notion.so/My-DB-${databaseId}?v=test`,
+				NOTION_DATABASE_ID: databaseId,
 			}),
 		);
 

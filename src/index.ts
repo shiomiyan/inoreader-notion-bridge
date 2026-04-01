@@ -3,10 +3,10 @@ import { Hono } from "hono";
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import { type ParsedInoreaderItem, type StreamContents, parseWebhookPayload } from "./inoreader";
 import {
-	createOrUpdateNotionPage,
-	findExistingNotionPageByUrl,
+	getPageIdByUrl,
 	type NotionWriteResult,
-	resolveNotionParent,
+	resolveParent,
+	upsertPage,
 } from "./notion";
 
 export type Bindings = Env & {
@@ -56,24 +56,24 @@ export async function processWebhookBatch(
 ): Promise<void> {
 	const startedAt = Date.now();
 
-		try {
-			const parent = await resolveNotionParent(fetch, env.NOTION_API_KEY, env);
+	try {
+		const parent = await resolveParent(fetch, env.NOTION_API_KEY, env);
 
-			for (const message of batch.messages) {
-				try {
-					const result = await processItem(message.body, env, parent);
-					if (result.usedWafFallback) {
-						console.error("Notion request blocked by Cloudflare WAF; saved fallback page", {
-							messageId: message.id,
-							attempts: message.attempts,
-							item: message.body,
-							wafBlock: result.wafBlock,
-						});
-					}
-					message.ack();
-				} catch (error) {
-					console.error("Failed to process queued item", {
+		for (const message of batch.messages) {
+			try {
+				const result = await processItem(message.body, env, parent);
+				if (result.usedWafFallback) {
+					console.error("Notion request blocked by Cloudflare WAF; saved fallback page", {
 						messageId: message.id,
+						attempts: message.attempts,
+						item: message.body,
+						wafBlock: result.wafBlock,
+					});
+				}
+				message.ack();
+			} catch (error) {
+				console.error("Failed to process queued item", {
+					messageId: message.id,
 					attempts: message.attempts,
 					item: message.body,
 					error: serializeError(error),
@@ -95,9 +95,9 @@ export async function processWebhookBatch(
 async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
-	parent: Awaited<ReturnType<typeof resolveNotionParent>>,
+	parent: Awaited<ReturnType<typeof resolveParent>>,
 ): Promise<NotionWriteResult> {
-	const existingPageId = await findExistingNotionPageByUrl(
+	const existingPageId = await getPageIdByUrl(
 		fetch,
 		env.NOTION_API_KEY,
 		parent,
@@ -106,7 +106,7 @@ async function processItem(
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
 	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
 
-	return await createOrUpdateNotionPage(
+	return await upsertPage(
 		fetch,
 		env.NOTION_API_KEY,
 		parent,
