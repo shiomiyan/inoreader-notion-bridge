@@ -28,7 +28,7 @@
 		"required": [
 			"INOREADER_RULE_NAME",
 			"NOTION_API_KEY",
-			"NOTION_DATABASE_ID"
+			"NOTION_DATA_SOURCE_ID"
 		]
 	},
 	"observability": {

@@ -128,8 +128,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -199,8 +199,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -245,8 +245,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -324,8 +324,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -382,8 +382,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -478,8 +478,8 @@ describe("inoreader notion bridge", () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === "https://api.notion.com/v1/databases/notion-db" && init?.method === "GET") {
-				return jsonResponse({ id: "notion-db", data_sources: [{ id: "notion-ds" }] });
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
@@ -578,7 +578,7 @@ describe("inoreader notion bridge", () => {
 		);
 	});
 
-	it("retries the whole batch when notion parent resolution fails", async () => {
+	it("retries the whole batch when notion data source id is missing", async () => {
 		const fetchMock = createFetchMock(async (input) => {
 			throw new Error(`Unhandled fetch for ${getUrl(input)}`);
 		});
@@ -594,7 +594,7 @@ describe("inoreader notion bridge", () => {
 		await processWebhookBatch(
 			batch,
 			createEnv({
-				NOTION_DATABASE_ID: "",
+				NOTION_DATA_SOURCE_ID: "",
 			}),
 		);
 
@@ -622,17 +622,13 @@ describe("inoreader notion bridge", () => {
 		expect(markdown).not.toContain("# 記事タイトル");
 	});
 
-	it("resolves a database parent to its first data source", async () => {
-		const databaseId = "123456781234123412341234567890ab";
+	it("uses the configured data source id directly for page creation", async () => {
 		const dataSourceId = "abcdefabcdefabcdefabcdefabcdefab";
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
-			if (url === `https://api.notion.com/v1/databases/${databaseId}` && init?.method === "GET") {
-				return jsonResponse({
-					id: databaseId,
-					data_sources: [{ id: dataSourceId }],
-				});
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
 			}
 
 			if (url === `https://api.notion.com/v1/data_sources/${dataSourceId}/query`) {
@@ -674,7 +670,7 @@ describe("inoreader notion bridge", () => {
 			batch,
 			createEnv({
 				AI: ai,
-				NOTION_DATABASE_ID: databaseId,
+				NOTION_DATA_SOURCE_ID: dataSourceId,
 			}),
 		);
 
@@ -723,7 +719,7 @@ function createEnv(
 		AI: { toMarkdown: ReturnType<typeof vi.fn> };
 		inoreader_notion_bridge_queue: Bindings["inoreader_notion_bridge_queue"];
 		NOTION_API_KEY: string;
-		NOTION_DATABASE_ID: string;
+		NOTION_DATA_SOURCE_ID: string;
 		INOREADER_RULE_NAME: string;
 	}>,
 ): Bindings {
@@ -733,7 +729,7 @@ function createEnv(
 		},
 		inoreader_notion_bridge_queue: createQueueBinding(),
 		NOTION_API_KEY: "notion-secret",
-		NOTION_DATABASE_ID: "notion-db",
+		NOTION_DATA_SOURCE_ID: "notion-ds",
 		INOREADER_RULE_NAME: "MASKED",
 		...overrides,
 	} as unknown as Bindings;
@@ -806,4 +802,12 @@ function parseJson(body: BodyInit | null | undefined): any {
 	}
 
 	return JSON.parse(body);
+}
+
+function expectNotionVersion(init: RequestInit | undefined) {
+	expect(init?.headers).toEqual(
+		expect.objectContaining({
+			"Notion-Version": "2026-03-11",
+		}),
+	);
 }

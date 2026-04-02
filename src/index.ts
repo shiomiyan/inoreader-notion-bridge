@@ -3,9 +3,9 @@ import { Hono } from "hono";
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import { type ParsedInoreaderItem, type StreamContents, parseWebhookPayload } from "./inoreader";
 import {
+	getDataSourceId,
 	getPageIdByUrl,
 	type NotionWriteResult,
-	resolveParent,
 	upsertPage,
 } from "./notion";
 
@@ -57,11 +57,11 @@ export async function processWebhookBatch(
 	const startedAt = Date.now();
 
 	try {
-		const parent = await resolveParent(fetch, env.NOTION_API_KEY, env);
+		const dataSourceId = getDataSourceId(env);
 
 		for (const message of batch.messages) {
 			try {
-				const result = await processItem(message.body, env, parent);
+				const result = await processItem(message.body, env, dataSourceId);
 				if (result.usedWafFallback) {
 					console.error("Notion request blocked by Cloudflare WAF; saved fallback page", {
 						messageId: message.id,
@@ -95,12 +95,12 @@ export async function processWebhookBatch(
 async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
-	parent: Awaited<ReturnType<typeof resolveParent>>,
+	dataSourceId: string,
 ): Promise<NotionWriteResult> {
 	const existingPageId = await getPageIdByUrl(
 		fetch,
 		env.NOTION_API_KEY,
-		parent,
+		dataSourceId,
 		item.url,
 	);
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
@@ -109,7 +109,7 @@ async function processItem(
 	return await upsertPage(
 		fetch,
 		env.NOTION_API_KEY,
-		parent,
+		dataSourceId,
 		item,
 		notionMarkdown,
 		existingPageId,
