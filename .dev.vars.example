@@ -1,3 +1,3 @@
 INOREADER_RULE_NAME="your-inoreader-rule-name"
 NOTION_API_KEY="secret_your_notion_api_key"
-NOTION_DATABASE_ID="your-notion-database-id-or-url"
+NOTION_DATA_SOURCE_ID="your-notion-data-source-id-or-url"
