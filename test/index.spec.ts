@@ -372,7 +372,56 @@ describe("inoreader notion bridge", () => {
 				messageId: batch.messages[0].id,
 				attempts: batch.messages[0].attempts,
 				error: expect.objectContaining({
-					message: expect.stringContaining("Notion API request failed"),
+					message: "Request failed: 500",
+				}),
+			}),
+		);
+	});
+
+	it("logs and retries when Notion returns a non-JSON response", async () => {
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
+			}
+
+			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
+				return new Response("<html><body>upstream error</body></html>", {
+					status: 502,
+					headers: { "content-type": "text/html" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
+
+		await processWebhookBatch(batch, createEnv());
+
+		expect(batch.messages[0].retry).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].ack).not.toHaveBeenCalled();
+		expect(console.error).toHaveBeenCalledWith(
+			"Invalid Notion response",
+			expect.objectContaining({
+				status: 502,
+				path: "/v1/data_sources/notion-ds/query",
+			}),
+		);
+		expect(console.error).toHaveBeenCalledWith(
+			"Failed to process queued item",
+			expect.objectContaining({
+				messageId: batch.messages[0].id,
+				attempts: batch.messages[0].attempts,
+				error: expect.objectContaining({
+					message: "Invalid response",
 				}),
 			}),
 		);

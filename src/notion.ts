@@ -32,20 +32,20 @@ export class NotionApiError extends Error {
 	}
 }
 
-export function getDataSourceId(env: Pick<Env, "NOTION_DATA_SOURCE_ID">): string {
+export const getDataSourceId = (env: Pick<Env, "NOTION_DATA_SOURCE_ID">): string => {
 	if (!env.NOTION_DATA_SOURCE_ID) {
-		throw new Error("NOTION_DATA_SOURCE_ID is required");
+		throw new Error("Missing NOTION_DATA_SOURCE_ID");
 	}
 
 	return env.NOTION_DATA_SOURCE_ID;
-}
+};
 
-export async function getPageIdByUrl(
+export const getPageIdByUrl = async (
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	dataSourceId: string,
 	url: string,
-): Promise<string | null> {
+): Promise<string | null> => {
 	const result = await query(fetchImpl, notionApiKey, dataSourceId, {
 		filter: {
 			property: "url",
@@ -57,16 +57,16 @@ export async function getPageIdByUrl(
 	});
 
 	return getPageId(result.results[0]) ?? null;
-}
+};
 
-export async function upsertPage(
+export const upsertPage = async (
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	dataSourceId: string,
 	item: ParsedInoreaderItem,
 	markdown: string,
 	existingPageId: string | null,
-): Promise<NotionWriteResult> {
+): Promise<NotionWriteResult> => {
 	const updatedAt = new Date().toISOString();
 
 	if (!existingPageId) {
@@ -142,14 +142,14 @@ export async function upsertPage(
 		outcome: "updated",
 		usedWafFallback: false,
 	};
-}
+};
 
-async function query(
+const query = async (
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	dataSourceId: string,
 	body: Record<string, unknown>,
-): Promise<QueryResult> {
+): Promise<QueryResult> => {
 	return await request<QueryResult>(
 		fetchImpl,
 		notionApiKey,
@@ -159,14 +159,14 @@ async function query(
 			body: JSON.stringify(body),
 		},
 	);
-}
+};
 
-async function request<T>(
+const request = async <T>(
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	path: string,
 	init: RequestInit,
-): Promise<T> {
+): Promise<T> => {
 	const response = await fetchImpl(`https://api.notion.com${path}`, {
 		...init,
 		headers: {
@@ -179,13 +179,31 @@ async function request<T>(
 	});
 
 	const text = await response.text();
-	const body = text ? safeJsonParse(text) : undefined;
 	const cloudflareRayId = response.headers.get("cf-ray");
 	const wafBlocked = isCloudflareWafResponse(response.status, text, cloudflareRayId);
+	const body = text ? parseJson(text) : undefined;
+
+	if (text && body === undefined) {
+		console.error("Invalid Notion response", {
+			status: response.status,
+			path,
+			cloudflareRayId: cloudflareRayId ?? undefined,
+		});
+
+		throw new NotionApiError(
+			"Invalid response",
+			response.status,
+			path,
+			NOTION_VERSION,
+			undefined,
+			wafBlocked,
+			cloudflareRayId ?? undefined,
+		);
+	}
 
 	if (!response.ok) {
 		throw new NotionApiError(
-			`Notion API request failed with status ${response.status} for ${path} (${NOTION_VERSION})`,
+			`Request failed: ${response.status}`,
 			response.status,
 			path,
 			NOTION_VERSION,
@@ -196,19 +214,19 @@ async function request<T>(
 	}
 
 	return body as T;
-}
+};
 
-export function isCloudflareWafBlock(error: unknown): error is NotionApiError {
+export const isCloudflareWafBlock = (error: unknown): error is NotionApiError => {
 	return error instanceof NotionApiError && error.wafBlocked;
-}
+};
 
-async function createFallbackPage(
+const createFallbackPage = async (
 	fetchImpl: typeof fetch,
 	notionApiKey: string,
 	dataSourceId: string,
 	item: ParsedInoreaderItem,
 	updatedAt: string,
-): Promise<void> {
+): Promise<void> => {
 	await request(fetchImpl, notionApiKey, "/v1/pages", {
 		method: "POST",
 		body: JSON.stringify({
@@ -217,9 +235,9 @@ async function createFallbackPage(
 			markdown: "本文保存が Cloudflare WAF によりブロックされました。",
 		}),
 	});
-}
+};
 
-function buildProperties(item: ParsedInoreaderItem, updatedAt: string) {
+const buildProperties = (item: ParsedInoreaderItem, updatedAt: string) => {
 	return {
 		title: {
 			title: [
@@ -241,25 +259,25 @@ function buildProperties(item: ParsedInoreaderItem, updatedAt: string) {
 			},
 		},
 	};
-}
+};
 
-function getPageId(page: Record<string, unknown> | undefined): string | undefined {
+const getPageId = (page: Record<string, unknown> | undefined): string | undefined => {
 	return typeof page?.id === "string" ? page.id : undefined;
-}
+};
 
-function safeJsonParse(value: string): unknown {
+const parseJson = (text: string): unknown => {
 	try {
-		return JSON.parse(value);
+		return JSON.parse(text);
 	} catch {
-		return value;
+		return undefined;
 	}
-}
+};
 
-function isCloudflareWafResponse(
+const isCloudflareWafResponse = (
 	status: number,
 	bodyText: string,
 	cloudflareRayId: string | null,
-): boolean {
+): boolean => {
 	if (status !== 403) {
 		return false;
 	}
@@ -272,4 +290,4 @@ function isCloudflareWafResponse(
 		bodyText.includes("Attention Required! | Cloudflare") ||
 		bodyText.includes("Sorry, you have been blocked")
 	);
-}
+};
