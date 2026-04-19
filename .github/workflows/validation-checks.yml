@@ -7,7 +7,7 @@ on:
       - master
 
 jobs:
-  checks:
+  validation_checks:
     runs-on: ubuntu-latest
     name: Validation Checks
     steps:
