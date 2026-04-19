@@ -1,0 +1,37 @@
+version: 2
+
+updates:
+  # npm
+  - package-ecosystem: "npm"
+    directory: "/"
+
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 7
+    versioning-strategy: "increase"
+    ignore:
+      - dependency-name: "@types/node"
+
+    groups:
+      # Only semver-minor and semver-patch npm updates are eligible for auto-merge.
+      prd-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+
+      dev-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions
+  # GitHub Actions updates stay manual even when they are patch releases.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 7
