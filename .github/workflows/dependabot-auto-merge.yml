@@ -9,7 +9,7 @@ on:
       - synchronize
       - ready_for_review
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Validation Checks"]
     types:
       - completed
 
@@ -37,7 +37,10 @@ jobs:
 
       - name: Mark supported npm updates for post-CI merge
         if: |
-          steps.metadata.outputs.package-ecosystem == 'npm' &&
+          (
+            steps.metadata.outputs.package-ecosystem == 'npm' ||
+            steps.metadata.outputs.package-ecosystem == 'npm_and_yarn'
+          ) &&
           (
             steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
             steps.metadata.outputs.update-type == 'version-update:semver-patch'
