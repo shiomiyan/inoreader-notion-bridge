@@ -1,0 +1,78 @@
+name: Dependabot Auto Merge
+
+on:
+  pull_request:
+    branches: [master]
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  mark-auto-merge-candidate:
+    runs-on: ubuntu-latest
+    name: Dependabot Auto Merge Candidate
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'shiomiyan/inoreader-notion-bridge' &&
+      github.event.pull_request.draft == false
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@ffa630c65fa7e0ecfa0625b5ceda64399aea1b36 # v3.0.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mark supported npm updates for post-CI merge
+        if: |
+          steps.metadata.outputs.package-ecosystem == 'npm' &&
+          (
+            steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+            steps.metadata.outputs.update-type == 'version-update:semver-patch'
+          )
+        env:
+          # Use the ephemeral workflow token only. Do not use a PAT here.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${PR_HEAD_SHA}" \
+            -f state=success \
+            -f context='dependabot/automerge' \
+            -f description='Eligible for Dependabot auto-merge.' \
+            -f target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+  merge-after-ci:
+    runs-on: ubuntu-latest
+    name: Dependabot Auto Merge
+    timeout-minutes: 10
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.repository == 'shiomiyan/inoreader-notion-bridge'
+    steps:
+      - name: Merge marked Dependabot pull request
+        env:
+          # Use the ephemeral workflow token only. Do not use a PAT here.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          test -n "${PR_NUMBER}" || exit 0
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${WORKFLOW_RUN_HEAD_SHA}/status" \
+            --jq '.statuses[] | select(.context == "dependabot/automerge" and .state == "success")' >/dev/null || exit 0
+          gh pr merge --merge --match-head-commit "${WORKFLOW_RUN_HEAD_SHA}" "${PR_NUMBER}"
