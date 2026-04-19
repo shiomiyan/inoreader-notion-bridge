@@ -8,7 +8,7 @@
 		"start": "wrangler dev",
 		"test": "vitest run",
 		"cf-typegen": "wrangler types",
-		"check": "tsc --noEmit && biome check --write ./src",
+		"check": "npm run cf-typegen && tsc --noEmit && biome check --write ./src",
 		"lint": "biome lint ./src"
 	},
 	"devDependencies": {
