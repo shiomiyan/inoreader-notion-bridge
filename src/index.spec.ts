@@ -198,7 +198,18 @@ describe("inoreader notion bridge", () => {
 				.fn()
 				.mockResolvedValueOnce({
 					format: "markdown",
-					data: "# テストテストテスト\n\n本文A",
+					data: `---
+description: Converted by AI
+title: AI generated title
+tags:
+  - security
+categories:
+  - "[[AI]]"
+---
+
+# テストテストテスト
+
+本文A`,
 				})
 				.mockResolvedValueOnce({
 					format: "markdown",
@@ -236,6 +247,21 @@ describe("inoreader notion bridge", () => {
 		});
 		expect(archive.put).toHaveBeenCalledTimes(2);
 		expect(archive.put.mock.calls[0]?.[0]).toMatch(/^clippings\/2026-03-29-0102-[a-f0-9]{7}\.md$/);
+		const archivedMarkdown = archive.put.mock.calls[0]?.[1];
+		expect(typeof archivedMarkdown).toBe("string");
+		expect(archivedMarkdown).toContain("description: Converted by AI");
+		expect(archivedMarkdown).toContain("title: AI generated title");
+		expect(archivedMarkdown).toContain("tags:\n  - security\n  - clippings");
+		expect(archivedMarkdown).toContain('categories:\n  - "[[Clippings]]"');
+		expect(archivedMarkdown).not.toContain('  - "[[AI]]"');
+		expect((archivedMarkdown as string).match(/^---$/gm)).toHaveLength(2);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://api.notion.com/v1/pages",
+			expect.objectContaining({
+				method: "POST",
+				body: expect.stringContaining("description: Converted by AI"),
+			}),
+		);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].retry).not.toHaveBeenCalled();

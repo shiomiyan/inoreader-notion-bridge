@@ -1,3 +1,4 @@
+import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
 
 export type MarkdownAi = Pick<Env["AI"], "toMarkdown">;
@@ -105,21 +106,19 @@ export function buildNotionMarkdown(
 	markdown: string,
 	savedAt: Date = new Date(),
 ): string {
-	const content = removeLeadingDuplicateHeading(markdown, item.title);
-	const frontmatter = [
-		"---",
-		`title: ${escapeYamlString(item.title)}`,
-		`source: ${escapeYamlString(item.url)}`,
-		`created: ${savedAt.toISOString()}`,
-		"tags:",
-		"  - clippings",
-		'cover: ""',
-		"categories:",
-		"  - '[[Clippings]]'",
-		"---",
-	];
+	const extracted = extractLeadingFrontmatter(markdown);
+	const content = removeLeadingDuplicateHeading(extracted.content, item.title);
+	const metadata = mergeFrontmatter(extracted.data, {
+		title: item.title,
+		source: item.url,
+		created: savedAt.toISOString(),
+		tags: ["clippings"],
+		cover: "",
+		categories: ["[[Clippings]]"],
+	});
+	const frontmatter = stringify(metadata).trimEnd();
 
-	return [...frontmatter, "", content].join("\n").trim();
+	return `---\n${frontmatter}\n---\n\n${content}`.trim();
 }
 
 function removeLeadingDuplicateHeading(markdown: string, title: string): string {
@@ -145,8 +144,84 @@ function normalizeHeading(value: string): string {
 		.replace(/\s+/g, " ");
 }
 
-function escapeYamlString(value: string): string {
-	return JSON.stringify(value);
+function extractLeadingFrontmatter(markdown: string): {
+	content: string;
+	data: Record<string, unknown> | null;
+} {
+	const trimmed = markdown.trim();
+	const match = trimmed.match(/^---\s*\r?\n([\s\S]*?)\r?\n(?:---|\.{3})\s*(?:\r?\n|$)/);
+
+	if (!match) {
+		return {
+			content: trimmed,
+			data: null,
+		};
+	}
+
+	const data = parseFrontmatter(match[1]);
+
+	return {
+		content: trimmed.slice(match[0].length).trim(),
+		data,
+	};
+}
+
+function parseFrontmatter(source: string): Record<string, unknown> | null {
+	const document = parseDocument(source);
+	if (document.errors.length > 0) {
+		return null;
+	}
+
+	const parsed = document.toJS();
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+		return null;
+	}
+
+	return parsed as Record<string, unknown>;
+}
+
+function mergeFrontmatter(
+	aiMetadata: Record<string, unknown> | null,
+	defaults: {
+		title: string;
+		source: string;
+		created: string;
+		tags: string[];
+		cover: string;
+		categories: string[];
+	},
+): Record<string, unknown> {
+	const merged: Record<string, unknown> = { ...(aiMetadata ?? {}) };
+
+	for (const [key, value] of Object.entries({
+		title: defaults.title,
+		source: defaults.source,
+		created: defaults.created,
+		cover: defaults.cover,
+	})) {
+		if (merged[key] === undefined) {
+			merged[key] = value;
+		}
+	}
+
+	merged.tags = mergeStringArray(merged.tags, defaults.tags);
+	merged.categories = defaults.categories;
+
+	return merged;
+}
+
+function mergeStringArray(value: unknown, defaults: string[]): string[] {
+	const items = Array.isArray(value)
+		? value.filter((item): item is string => typeof item === "string")
+		: [];
+
+	for (const defaultValue of defaults) {
+		if (!items.includes(defaultValue)) {
+			items.push(defaultValue);
+		}
+	}
+
+	return items;
 }
 
 function toErrorMessage(error: unknown): string {
