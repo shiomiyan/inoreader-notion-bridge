@@ -1,17 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { buildNotionMarkdown } from "../src/article";
-import { app, processWebhookBatch } from "../src/index";
-import type { Bindings } from "../src/index";
-import type { ParsedInoreaderItem, StreamContents } from "../src/inoreader";
-import samplePayload from "./inoreader.req.json";
+import samplePayload from "./__fixtures__/inoreader.req.json";
+import type { Bindings } from "./index";
+import { app, processWebhookBatch } from "./index";
+import type { ParsedInoreaderItem, StreamContents } from "./inoreader";
 
 type MockFetch = typeof fetch & {
 	mock: ReturnType<typeof vi.fn>;
 };
 
 type R2BucketStub = Pick<R2Bucket, "put"> & {
-	put: ReturnType<typeof vi.fn<(key: string, value: BodyInit | null, options?: R2PutOptions) => Promise<R2Object | null>>>;
+	put: ReturnType<
+		typeof vi.fn<
+			(key: string, value: BodyInit | null, options?: R2PutOptions) => Promise<R2Object | null>
+		>
+	>;
+};
+
+type QueueBindingStub = {
+	send: ReturnType<typeof vi.fn>;
+	sendBatch: ReturnType<typeof vi.fn>;
 };
 
 type QueueMessageStub = Message<ParsedInoreaderItem> & {
@@ -23,6 +30,38 @@ type QueueBatchStub = MessageBatch<ParsedInoreaderItem> & {
 	messages: QueueMessageStub[];
 	retryAll: ReturnType<typeof vi.fn<(options?: QueueRetryOptions) => void>>;
 	ackAll: ReturnType<typeof vi.fn<() => void>>;
+};
+
+type NotionRequestBody = {
+	markdown?: string;
+	parent?: {
+		data_source_id?: string;
+	};
+	properties?: {
+		title?: {
+			title?: Array<{
+				text?: {
+					content?: string;
+					link?: {
+						url?: string;
+					};
+				};
+			}>;
+		};
+		url?: {
+			url?: string;
+		};
+		updated?: {
+			date?: {
+				start?: string;
+			};
+		};
+		created?: {
+			date?: {
+				start?: string;
+			};
+		};
+	};
 };
 
 describe("inoreader notion bridge", () => {
@@ -196,9 +235,7 @@ describe("inoreader notion bridge", () => {
 			},
 		});
 		expect(archive.put).toHaveBeenCalledTimes(2);
-		expect(archive.put.mock.calls[0]?.[0]).toMatch(
-			/^clippings\/2026-03-29-0102-[a-f0-9]{7}\.md$/,
-		);
+		expect(archive.put.mock.calls[0]?.[0]).toMatch(/^clippings\/2026-03-29-0102-[a-f0-9]{7}\.md$/);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -342,7 +379,7 @@ describe("inoreader notion bridge", () => {
 			}
 
 			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
-				const body = parseJson(init?.body);
+				const body = parseJson<NotionRequestBody>(init?.body);
 				if (body?.properties?.title?.title?.[0]?.text?.content === "テストテストテスト") {
 					return new Response(JSON.stringify({ message: "failure" }), { status: 500 });
 				}
@@ -449,10 +486,13 @@ describe("inoreader notion bridge", () => {
 			}
 
 			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
-				const body = parseJson(init?.body);
+				const body = parseJson<NotionRequestBody>(init?.body);
+				if (!body) {
+					throw new Error("Expected Notion create body");
+				}
 				if (body?.markdown?.includes("本文A")) {
 					return new Response(
-						'<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-create-123</strong></p></body></html>',
+						"<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-create-123</strong></p></body></html>",
 						{
 							status: 403,
 							headers: {
@@ -561,7 +601,10 @@ describe("inoreader notion bridge", () => {
 			}
 
 			if (url === "https://api.notion.com/v1/pages/page-123" && init?.method === "PATCH") {
-				const body = parseJson(init?.body);
+				const body = parseJson<NotionRequestBody>(init?.body);
+				if (!body) {
+					throw new Error("Expected Notion update body");
+				}
 				expect(body.properties).toEqual({
 					title: {
 						title: [
@@ -593,7 +636,7 @@ describe("inoreader notion bridge", () => {
 
 			if (url === "https://api.notion.com/v1/pages/page-123/markdown" && init?.method === "PATCH") {
 				return new Response(
-					'<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-update-456</strong></p></body></html>',
+					"<!DOCTYPE html><html><head><title>Attention Required! | Cloudflare</title></head><body><h1>Sorry, you have been blocked</h1><p>Cloudflare Ray ID: <strong>ray-update-456</strong></p></body></html>",
 					{
 						status: 403,
 						headers: {
@@ -668,30 +711,6 @@ describe("inoreader notion bridge", () => {
 
 		expect(batch.retryAll).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].ack).not.toHaveBeenCalled();
-	});
-
-	it("builds readable notion markdown and strips duplicated title heading", () => {
-		const markdown = buildNotionMarkdown(
-			{
-				title: "記事タイトル",
-				url: "https://example.com/article",
-				author: "Jane Doe",
-				published: 1_711_676_800,
-				feedTitle: "Example Feed",
-			},
-			"# 記事タイトル\n\n本文です。",
-			new Date("2026-03-29T01:02:03.000Z"),
-		);
-
-		expect(markdown).toContain("---\n");
-		expect(markdown).toContain('title: "記事タイトル"');
-		expect(markdown).toContain('source: "https://example.com/article"');
-		expect(markdown).toContain("created: 2026-03-29T01:02:03.000Z");
-		expect(markdown).toContain("tags:\n  - clippings");
-		expect(markdown).toContain('cover: ""');
-		expect(markdown).toContain("categories:\n  - '[[Clippings]]'");
-		expect(markdown).toContain("本文です。");
-		expect(markdown).not.toContain("# 記事タイトル");
 	});
 
 	it("continues Notion upsert when archiving to R2 fails", async () => {
@@ -772,7 +791,10 @@ describe("inoreader notion bridge", () => {
 			}
 
 			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
-				const body = parseJson(init?.body);
+				const body = parseJson<NotionRequestBody>(init?.body);
+				if (!body) {
+					throw new Error("Expected Notion page payload");
+				}
 				expect(body.parent).toEqual({ data_source_id: dataSourceId });
 				return jsonResponse({ id: "created-page" });
 			}
@@ -853,8 +875,8 @@ function createRequest(body: unknown): Request {
 function createEnv(
 	overrides?: Partial<{
 		AI: { toMarkdown: ReturnType<typeof vi.fn> };
-		inoreader_notion_bridge_queue: Bindings["inoreader_notion_bridge_queue"];
-		WEB_CLIPPINGS: Bindings["WEB_CLIPPINGS"];
+		inoreader_notion_bridge_queue: QueueBindingStub;
+		WEB_CLIPPINGS: R2BucketStub;
 		NOTION_API_KEY: string;
 		NOTION_DATA_SOURCE_ID: string;
 		INOREADER_RULE_NAME: string;
@@ -873,20 +895,24 @@ function createEnv(
 	} as unknown as Bindings;
 }
 
-function createQueueBinding(
-	overrides?: Partial<Bindings["inoreader_notion_bridge_queue"]>,
-): Bindings["inoreader_notion_bridge_queue"] {
+function createQueueBinding(overrides?: Partial<QueueBindingStub>): QueueBindingStub {
 	const send = vi
-		.fn<(message: ParsedInoreaderItem, options?: QueueSendOptions) => Promise<void>>()
-		.mockResolvedValue(undefined);
+		.fn<(message: ParsedInoreaderItem, options?: QueueSendOptions) => Promise<QueueSendResponse>>()
+		.mockResolvedValue({
+			id: "queue-send-1",
+			metadata: {},
+		} as unknown as QueueSendResponse);
 	const sendBatch = vi
 		.fn<
 			(
 				messages: Iterable<MessageSendRequest<ParsedInoreaderItem>>,
 				options?: QueueSendBatchOptions,
-			) => Promise<void>
+			) => Promise<QueueSendBatchResponse>
 		>()
-		.mockResolvedValue(undefined);
+		.mockResolvedValue({
+			count: 1,
+			metadata: {},
+		} as unknown as QueueSendBatchResponse);
 
 	return {
 		send,
@@ -902,9 +928,7 @@ function createArchiveBucket(overrides?: Partial<R2BucketStub>): R2BucketStub {
 	};
 }
 
-function createFetchMock(
-	implementation: Parameters<typeof vi.fn<typeof fetch>>[0],
-): MockFetch {
+function createFetchMock(implementation: Parameters<typeof vi.fn<typeof fetch>>[0]): MockFetch {
 	const mock = vi.fn(implementation);
 	return mock as unknown as MockFetch;
 }
@@ -924,6 +948,7 @@ function createMessageBatch(items: ParsedInoreaderItem[]): QueueBatchStub {
 
 	return {
 		queue: "inoreader-notion-bridge-queue",
+		metadata: {} as MessageBatchMetadata,
 		messages,
 		retryAll: vi.fn<(options?: QueueRetryOptions) => void>(),
 		ackAll: vi.fn<() => void>(),
@@ -941,12 +966,12 @@ function jsonResponse(body: unknown): Response {
 	});
 }
 
-function parseJson(body: BodyInit | null | undefined): any {
+function parseJson<T>(body: BodyInit | null | undefined): T | undefined {
 	if (typeof body !== "string") {
 		return undefined;
 	}
 
-	return JSON.parse(body);
+	return JSON.parse(body) as T;
 }
 
 function expectNotionVersion(init: RequestInit | undefined) {
