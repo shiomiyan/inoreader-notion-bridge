@@ -26,7 +26,7 @@ sequenceDiagram
 - Development shell is provided via `nix develop`.
 - Cloudflare R2 bucket binding `WEB_CLIPPINGS` を設定します。bucket実名は環境ごとに分けて構いません。
 - Notion data source には既存の `title` / `url` / `updated` に加えて `created` の date property を追加します。
-- R2 には Obsidian 向けの frontmatter 付き Markdown を `clippings/YYYY/MM/DD/<url-hash>.md` 形式で保存します。
+- R2 には Obsidian 向けの frontmatter 付き Markdown を `clippings/YYYY-MM-DD-HHMM-<url-hash>.md` 形式で保存します。
 
 ## Development
 

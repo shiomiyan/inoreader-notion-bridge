@@ -22,20 +22,22 @@ export async function saveArchiveMarkdown(
 }
 
 /**
- * Builds the archive object key from the UTC save date and a stable SHA-256 hash
- * of the source URL.
+ * Builds the archive object key from the save date/time and a stable SHA-256
+ * hash of the source URL.
  */
 export async function buildArchiveObjectKey(url: string, savedAt: Date): Promise<string> {
-	const datePrefix = [
+	const timestamp = [
 		savedAt.getUTCFullYear().toString().padStart(4, "0"),
 		(savedAt.getUTCMonth() + 1).toString().padStart(2, "0"),
 		savedAt.getUTCDate().toString().padStart(2, "0"),
-	].join("/");
+		savedAt.getUTCHours().toString().padStart(2, "0") +
+			savedAt.getUTCMinutes().toString().padStart(2, "0"),
+	].join("-");
 
 	const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
 	const hash = Array.from(new Uint8Array(hashBuffer), (byte) =>
 		byte.toString(16).padStart(2, "0"),
 	).join("");
 
-	return `clippings/${datePrefix}/${hash}.md`;
+	return `clippings/${timestamp}-${hash}.md`;
 }
