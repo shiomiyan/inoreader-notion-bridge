@@ -1,13 +1,8 @@
 import { Hono } from "hono";
 
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
-import { type ParsedInoreaderItem, type StreamContents, parseWebhookPayload } from "./inoreader";
-import {
-	getDataSourceId,
-	getPageIdByUrl,
-	type NotionWriteResult,
-	upsertPage,
-} from "./notion";
+import { type ParsedInoreaderItem, parseWebhookPayload, type StreamContents } from "./inoreader";
+import { getDataSourceId, getPageIdByUrl, type NotionWriteResult, upsertPage } from "./notion";
 
 export type Bindings = Env & {
 	inoreader_notion_bridge_queue: Queue<ParsedInoreaderItem>;
@@ -97,12 +92,7 @@ async function processItem(
 	env: Bindings,
 	dataSourceId: string,
 ): Promise<NotionWriteResult> {
-	const existingPageId = await getPageIdByUrl(
-		fetch,
-		env.NOTION_API_KEY,
-		dataSourceId,
-		item.url,
-	);
+	const existingPageId = await getPageIdByUrl(fetch, env.NOTION_API_KEY, dataSourceId, item.url);
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
 	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
 
@@ -127,7 +117,14 @@ function serializeError(error: unknown) {
 			serialized.stack = error.stack;
 		}
 
-		for (const key of ["status", "path", "notionVersion", "body", "wafBlocked", "cloudflareRayId"] as const) {
+		for (const key of [
+			"status",
+			"path",
+			"notionVersion",
+			"body",
+			"wafBlocked",
+			"cloudflareRayId",
+		] as const) {
 			if (key in error) {
 				serialized[key] = (error as unknown as Record<string, unknown>)[key];
 			}

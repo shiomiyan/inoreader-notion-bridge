@@ -13,7 +13,7 @@
 		"test": "vitest run",
 		"cf-typegen": "wrangler types",
 		"check": "wrangler types --check && tsc --noEmit && biome check ./src ./test",
-		"format": "biome check --write ./src ./test",
+		"fmt": "biome check --write ./src ./test",
 		"lint": "biome lint ./src ./test"
 	},
 	"devDependencies": {
