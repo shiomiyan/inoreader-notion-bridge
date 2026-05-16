@@ -35,9 +35,9 @@ export async function buildArchiveObjectKey(url: string, savedAt: Date): Promise
 	].join("-");
 
 	const hashBuffer = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(url));
-	const hash = Array.from(new Uint8Array(hashBuffer), (byte) =>
-		byte.toString(16).padStart(2, "0"),
-	).join("");
+	const hash = Array.from(new Uint8Array(hashBuffer), (byte) => byte.toString(16).padStart(2, "0"))
+		.join("")
+		.slice(0, 7);
 
 	return `clippings/${timestamp}-${hash}.md`;
 }

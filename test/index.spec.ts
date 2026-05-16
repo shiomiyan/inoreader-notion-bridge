@@ -197,7 +197,7 @@ describe("inoreader notion bridge", () => {
 		});
 		expect(archive.put).toHaveBeenCalledTimes(2);
 		expect(archive.put.mock.calls[0]?.[0]).toMatch(
-			/^clippings\/2026-03-29-0102-[a-f0-9]{64}\.md$/,
+			/^clippings\/2026-03-29-0102-[a-f0-9]{7}\.md$/,
 		);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
