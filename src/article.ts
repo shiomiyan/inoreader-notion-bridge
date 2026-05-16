@@ -96,23 +96,30 @@ export async function convertHtmlToMarkdown(
 	return markdown;
 }
 
+/**
+ * Formats article markdown as an Obsidian-friendly document with frontmatter
+ * that can also be sent to Notion as the page body.
+ */
 export function buildNotionMarkdown(
 	item: ParsedInoreaderItem,
 	markdown: string,
 	savedAt: Date = new Date(),
 ): string {
 	const content = removeLeadingDuplicateHeading(markdown, item.title);
-	const metadata = [
-		`- Source: [${new URL(item.url).hostname}](${item.url})`,
-		item.author ? `- Author: ${item.author}` : undefined,
-		item.published ? `- Published: ${new Date(item.published * 1000).toISOString()}` : undefined,
-		item.feedTitle ? `- Feed: ${item.feedTitle}` : undefined,
-		`- Saved at: ${savedAt.toISOString()}`,
-	]
-		.filter((line): line is string => Boolean(line))
-		.join("\n");
+	const frontmatter = [
+		"---",
+		`title: ${escapeYamlString(item.title)}`,
+		`source: ${escapeYamlString(item.url)}`,
+		`created: ${savedAt.toISOString()}`,
+		"tags:",
+		"  - clippings",
+		'cover: ""',
+		"categories:",
+		"  - '[[Clippings]]'",
+		"---",
+	];
 
-	return [metadata, content].filter(Boolean).join("\n\n---\n\n").trim();
+	return [...frontmatter, "", content].join("\n").trim();
 }
 
 function removeLeadingDuplicateHeading(markdown: string, title: string): string {
@@ -136,6 +143,10 @@ function normalizeHeading(value: string): string {
 		.toLowerCase()
 		.replace(/[`"'“”‘’]/g, "")
 		.replace(/\s+/g, " ");
+}
+
+function escapeYamlString(value: string): string {
+	return JSON.stringify(value);
 }
 
 function toErrorMessage(error: unknown): string {

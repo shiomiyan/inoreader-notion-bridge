@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 
+import { saveArchiveMarkdown } from "./archive";
 import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
 import { type ParsedInoreaderItem, parseWebhookPayload, type StreamContents } from "./inoreader";
 import { getDataSourceId, getPageIdByUrl, type NotionWriteResult, upsertPage } from "./notion";
 
 export type Bindings = Env & {
 	inoreader_notion_bridge_queue: Queue<ParsedInoreaderItem>;
+	WEB_CLIPPINGS: R2Bucket;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -94,7 +96,17 @@ async function processItem(
 ): Promise<NotionWriteResult> {
 	const existingPageId = await getPageIdByUrl(fetch, env.NOTION_API_KEY, dataSourceId, item.url);
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
-	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown);
+	const savedAt = new Date();
+	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
+
+	try {
+		await saveArchiveMarkdown(env.WEB_CLIPPINGS, item, notionMarkdown, savedAt);
+	} catch (error) {
+		console.error("Failed to archive markdown to R2", {
+			item,
+			error: serializeError(error),
+		});
+	}
 
 	return await upsertPage(
 		fetch,
@@ -103,6 +115,7 @@ async function processItem(
 		item,
 		notionMarkdown,
 		existingPageId,
+		savedAt,
 	);
 }
 

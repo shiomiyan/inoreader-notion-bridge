@@ -66,8 +66,9 @@ export const upsertPage = async (
 	item: ParsedInoreaderItem,
 	markdown: string,
 	existingPageId: string | null,
+	savedAt: Date = new Date(),
 ): Promise<NotionWriteResult> => {
-	const updatedAt = new Date().toISOString();
+	const savedAtIso = savedAt.toISOString();
 
 	if (!existingPageId) {
 		try {
@@ -75,7 +76,7 @@ export const upsertPage = async (
 				method: "POST",
 				body: JSON.stringify({
 					parent: { data_source_id: dataSourceId },
-					properties: buildProperties(item, updatedAt),
+					properties: buildProperties(item, savedAtIso),
 					markdown,
 				}),
 			});
@@ -84,7 +85,7 @@ export const upsertPage = async (
 				throw error;
 			}
 
-			await createFallbackPage(fetchImpl, notionApiKey, dataSourceId, item, updatedAt);
+			await createFallbackPage(fetchImpl, notionApiKey, dataSourceId, item, savedAtIso);
 
 			return {
 				outcome: "created",
@@ -107,7 +108,7 @@ export const upsertPage = async (
 	await request(fetchImpl, notionApiKey, `/v1/pages/${existingPageId}`, {
 		method: "PATCH",
 		body: JSON.stringify({
-			properties: buildProperties(item, updatedAt),
+			properties: buildProperties(item, savedAtIso),
 		}),
 	});
 
@@ -237,7 +238,7 @@ const createFallbackPage = async (
 	});
 };
 
-const buildProperties = (item: ParsedInoreaderItem, updatedAt: string) => {
+const buildProperties = (item: ParsedInoreaderItem, savedAt: string) => {
 	return {
 		title: {
 			title: [
@@ -255,7 +256,12 @@ const buildProperties = (item: ParsedInoreaderItem, updatedAt: string) => {
 		},
 		updated: {
 			date: {
-				start: updatedAt,
+				start: savedAt,
+			},
+		},
+		created: {
+			date: {
+				start: savedAt,
 			},
 		},
 	};

@@ -10,6 +10,10 @@ type MockFetch = typeof fetch & {
 	mock: ReturnType<typeof vi.fn>;
 };
 
+type R2BucketStub = Pick<R2Bucket, "put"> & {
+	put: ReturnType<typeof vi.fn<(key: string, value: BodyInit | null, options?: R2PutOptions) => Promise<R2Object | null>>>;
+};
+
 type QueueMessageStub = Message<ParsedInoreaderItem> & {
 	ack: ReturnType<typeof vi.fn<() => void>>;
 	retry: ReturnType<typeof vi.fn<(options?: QueueRetryOptions) => void>>;
@@ -162,11 +166,12 @@ describe("inoreader notion bridge", () => {
 					data: "# 2本目の記事\n\n本文B",
 				}),
 		};
+		const archive = createArchiveBucket();
 
 		vi.stubGlobal("fetch", fetchMock);
 		const batch = createMessageBatch(items);
 
-		await processWebhookBatch(batch, createEnv({ AI: ai }));
+		await processWebhookBatch(batch, createEnv({ AI: ai, WEB_CLIPPINGS: archive }));
 
 		expect(ai.toMarkdown).toHaveBeenCalledTimes(2);
 		expect(fetchMock).toHaveBeenCalledWith(
@@ -190,6 +195,10 @@ describe("inoreader notion bridge", () => {
 				},
 			},
 		});
+		expect(archive.put).toHaveBeenCalledTimes(2);
+		expect(archive.put.mock.calls[0]?.[0]).toMatch(
+			/^clippings\/2026\/03\/29\/[a-f0-9]{64}\.md$/,
+		);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -474,6 +483,11 @@ describe("inoreader notion bridge", () => {
 							start: "2026-03-29T01:02:03.000Z",
 						},
 					},
+					created: {
+						date: {
+							start: "2026-03-29T01:02:03.000Z",
+						},
+					},
 				});
 				expect(body.markdown).toBe("本文保存が Cloudflare WAF によりブロックされました。");
 				return jsonResponse({ id: "created-page" });
@@ -564,6 +578,11 @@ describe("inoreader notion bridge", () => {
 						url: "https://example.com/",
 					},
 					updated: {
+						date: {
+							start: "2026-03-29T01:02:03.000Z",
+						},
+					},
+					created: {
 						date: {
 							start: "2026-03-29T01:02:03.000Z",
 						},
@@ -664,11 +683,79 @@ describe("inoreader notion bridge", () => {
 			new Date("2026-03-29T01:02:03.000Z"),
 		);
 
-		expect(markdown).toContain("- Source: [example.com](https://example.com/article)");
-		expect(markdown).toContain("- Author: Jane Doe");
-		expect(markdown).toContain("- Feed: Example Feed");
+		expect(markdown).toContain("---\n");
+		expect(markdown).toContain('title: "記事タイトル"');
+		expect(markdown).toContain('source: "https://example.com/article"');
+		expect(markdown).toContain("created: 2026-03-29T01:02:03.000Z");
+		expect(markdown).toContain("tags:\n  - clippings");
+		expect(markdown).toContain('cover: ""');
+		expect(markdown).toContain("categories:\n  - '[[Clippings]]'");
 		expect(markdown).toContain("本文です。");
 		expect(markdown).not.toContain("# 記事タイトル");
+	});
+
+	it("continues Notion upsert when archiving to R2 fails", async () => {
+		const archive = createArchiveBucket({
+			put: vi.fn().mockRejectedValue(new Error("r2 down")),
+		});
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
+			}
+
+			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
+				return jsonResponse({ results: [], has_more: false, next_cursor: null });
+			}
+
+			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
+				return jsonResponse({ id: "created-page" });
+			}
+
+			if (url === "https://example.com/") {
+				return new Response("<html><body><p>Article body</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# テストテストテスト\n\n本文A",
+			}),
+		};
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://example.com/",
+			},
+		]);
+
+		await processWebhookBatch(
+			batch,
+			createEnv({
+				AI: ai,
+				WEB_CLIPPINGS: archive,
+			}),
+		);
+
+		expect(archive.put).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+		expect(batch.messages[0].retry).not.toHaveBeenCalled();
+		expect(console.error).toHaveBeenCalledWith(
+			"Failed to archive markdown to R2",
+			expect.objectContaining({
+				error: expect.objectContaining({
+					message: "r2 down",
+				}),
+			}),
+		);
 	});
 
 	it("uses the configured data source id directly for page creation", async () => {
@@ -767,6 +854,7 @@ function createEnv(
 	overrides?: Partial<{
 		AI: { toMarkdown: ReturnType<typeof vi.fn> };
 		inoreader_notion_bridge_queue: Bindings["inoreader_notion_bridge_queue"];
+		WEB_CLIPPINGS: Bindings["WEB_CLIPPINGS"];
 		NOTION_API_KEY: string;
 		NOTION_DATA_SOURCE_ID: string;
 		INOREADER_RULE_NAME: string;
@@ -777,6 +865,7 @@ function createEnv(
 			toMarkdown: vi.fn(),
 		},
 		inoreader_notion_bridge_queue: createQueueBinding(),
+		WEB_CLIPPINGS: createArchiveBucket(),
 		NOTION_API_KEY: "notion-secret",
 		NOTION_DATA_SOURCE_ID: "notion-ds",
 		INOREADER_RULE_NAME: "MASKED",
@@ -802,6 +891,13 @@ function createQueueBinding(
 	return {
 		send,
 		sendBatch,
+		...overrides,
+	};
+}
+
+function createArchiveBucket(overrides?: Partial<R2BucketStub>): R2BucketStub {
+	return {
+		put: vi.fn().mockResolvedValue(null),
 		...overrides,
 	};
 }

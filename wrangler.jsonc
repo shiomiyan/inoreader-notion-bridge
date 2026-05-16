@@ -11,6 +11,12 @@
 	"ai": {
 		"binding": "AI"
 	},
+	"r2_buckets": [
+		{
+			"binding": "WEB_CLIPPINGS",
+			"bucket_name": "web-clippings"
+		}
+	],
 	"queues": {
 		"producers": [
 			{
