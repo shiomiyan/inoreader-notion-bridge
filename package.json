@@ -2,14 +2,19 @@
 	"name": "inoreader-notion-bridge",
 	"version": "0.0.0",
 	"private": true,
+	"packageManager": "pnpm@11.0.8",
+	"engines": {
+		"node": "24.x"
+	},
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest run",
 		"cf-typegen": "wrangler types",
-		"check": "npm run cf-typegen && tsc --noEmit && biome check --write ./src",
-		"lint": "biome lint ./src"
+		"check": "wrangler types --check && tsc --noEmit && biome check ./src ./test",
+		"format": "biome check --write ./src ./test",
+		"lint": "biome lint ./src ./test"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.14",
