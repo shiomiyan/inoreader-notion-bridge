@@ -56,12 +56,12 @@ categories:
 		expect(markdown.match(/^---$/gm)).toHaveLength(2);
 		expect(markdown).toContain("description: AI generated summary");
 		expect(markdown).toContain("title: AI title");
-		expect(markdown).toContain("image: https://example.com/cover.png");
+		expect(markdown).toContain("cover: https://example.com/cover.png");
 		expect(markdown).toContain("source: https://example.com/article");
 		expect(markdown).toContain("created: 2026-03-29T01:02:03.000Z");
-		expect(markdown).toContain('cover: ""');
 		expect(markdown).toContain("tags:\n  - security\n  - clippings");
 		expect(markdown).toContain('categories:\n  - "[[Clippings]]"');
+		expect(markdown).not.toContain("image: https://example.com/cover.png");
 		expect(markdown).not.toContain('  - "[[AI]]"');
 		expect(markdown).toContain("本文です。");
 		expect(markdown).not.toContain("# 記事タイトル");

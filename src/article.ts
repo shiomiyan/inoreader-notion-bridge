@@ -192,16 +192,21 @@ function mergeFrontmatter(
 	},
 ): Record<string, unknown> {
 	const merged: Record<string, unknown> = { ...(aiMetadata ?? {}) };
+	const image = typeof merged.image === "string" ? merged.image : null;
+	delete merged.image;
 
 	for (const [key, value] of Object.entries({
 		title: defaults.title,
 		source: defaults.source,
 		created: defaults.created,
-		cover: defaults.cover,
 	})) {
 		if (merged[key] === undefined) {
 			merged[key] = value;
 		}
+	}
+
+	if (merged.cover === undefined) {
+		merged.cover = image ?? defaults.cover;
 	}
 
 	merged.tags = mergeStringArray(merged.tags, defaults.tags);
