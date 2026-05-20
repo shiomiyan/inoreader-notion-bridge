@@ -114,10 +114,12 @@ title: [unterminated
 		const contentMock = vi
 			.fn()
 			.mockResolvedValue("<html><body><article>Rendered post</article></body></html>");
+		const titleMock = vi.fn().mockResolvedValue("Rendered title");
 		launchMock.mockResolvedValue({
 			newPage: vi.fn().mockResolvedValue({
 				goto: gotoMock,
 				content: contentMock,
+				title: titleMock,
 			}),
 			close: closeMock,
 		});
@@ -132,11 +134,13 @@ title: [unterminated
 
 		expect(article.hostname).toBe("x.com");
 		expect(article.html).toContain("Rendered post");
+		expect(article.title).toBe("Rendered title");
 		expect(launchMock).toHaveBeenCalledWith(browserBinding);
 		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
 			waitUntil: "networkidle0",
 			timeout: 30_000,
 		});
+		expect(titleMock).toHaveBeenCalledTimes(1);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});

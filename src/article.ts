@@ -7,6 +7,7 @@ export type MarkdownAi = Pick<Env["AI"], "toMarkdown">;
 export type ArticleHtml = {
 	html: string;
 	hostname: string;
+	title?: string;
 };
 
 const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
@@ -104,9 +105,12 @@ async function fetchArticleHtmlWithBrowserRendering(
 			throw new Error("empty HTML body");
 		}
 
+		const title = (await page.title()).trim() || undefined;
+
 		return {
 			html,
 			hostname: new URL(url).hostname,
+			title,
 		};
 	} catch (error) {
 		throw new Error(
