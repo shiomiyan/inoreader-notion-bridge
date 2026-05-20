@@ -1,3 +1,4 @@
+import puppeteer from "@cloudflare/puppeteer";
 import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
 
@@ -9,14 +10,17 @@ export type ArticleHtml = {
 };
 
 const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
+const BROWSER_RENDERING_TIMEOUT_MS = 30_000;
+const BROWSER_RENDERING_HOSTS = ["x.com"];
 
 export async function resolveArticleMarkdown(
 	item: ParsedInoreaderItem,
 	ai: MarkdownAi,
 	fetchImpl: typeof fetch,
+	browserBinding?: Fetcher,
 ): Promise<string> {
 	try {
-		const articleHtml = await fetchArticleHtml(item.url, fetchImpl);
+		const articleHtml = await fetchArticleHtml(item.url, fetchImpl, browserBinding);
 		return await convertHtmlToMarkdown(ai, articleHtml.html, articleHtml.hostname);
 	} catch (error) {
 		if (!item.summaryHtml) {
@@ -28,7 +32,21 @@ export async function resolveArticleMarkdown(
 	}
 }
 
-export async function fetchArticleHtml(url: string, fetchImpl: typeof fetch): Promise<ArticleHtml> {
+export async function fetchArticleHtml(
+	url: string,
+	fetchImpl: typeof fetch,
+	browserBinding?: Fetcher,
+): Promise<ArticleHtml> {
+	if (shouldUseBrowserRendering(url) && browserBinding) {
+		try {
+			return await fetchArticleHtmlWithBrowserRendering(url, browserBinding);
+		} catch {}
+	}
+
+	return await fetchArticleHtmlDirect(url, fetchImpl);
+}
+
+async function fetchArticleHtmlDirect(url: string, fetchImpl: typeof fetch): Promise<ArticleHtml> {
 	const controller = new AbortController();
 	const timeoutId = setTimeout(() => controller.abort(), ARTICLE_FETCH_TIMEOUT_MS);
 
@@ -63,6 +81,41 @@ export async function fetchArticleHtml(url: string, fetchImpl: typeof fetch): Pr
 		throw new Error(`Failed to fetch article HTML: ${toErrorMessage(error)}`);
 	} finally {
 		clearTimeout(timeoutId);
+	}
+}
+
+async function fetchArticleHtmlWithBrowserRendering(
+	url: string,
+	browserBinding: Fetcher,
+): Promise<ArticleHtml> {
+	let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
+
+	try {
+		browser = await puppeteer.launch(browserBinding);
+		const page = await browser.newPage();
+
+		await page.goto(url, {
+			waitUntil: "networkidle0",
+			timeout: BROWSER_RENDERING_TIMEOUT_MS,
+		});
+
+		const html = await page.content();
+		if (!html.trim()) {
+			throw new Error("empty HTML body");
+		}
+
+		return {
+			html,
+			hostname: new URL(url).hostname,
+		};
+	} catch (error) {
+		throw new Error(
+			`Failed to fetch article HTML with Browser Rendering: ${toErrorMessage(error)}`,
+		);
+	} finally {
+		if (browser) {
+			await browser.close().catch(() => undefined);
+		}
 	}
 }
 
@@ -231,4 +284,12 @@ function mergeStringArray(value: unknown, defaults: string[]): string[] {
 
 function toErrorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function shouldUseBrowserRendering(url: string): boolean {
+	try {
+		return BROWSER_RENDERING_HOSTS.includes(new URL(url).hostname);
+	} catch {
+		return false;
+	}
 }

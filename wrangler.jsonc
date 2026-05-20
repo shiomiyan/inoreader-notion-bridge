@@ -7,9 +7,13 @@
 	"name": "inoreader-notion-bridge",
 	"main": "src/index.ts",
 	"compatibility_date": "2025-04-21",
+	"compatibility_flags": ["nodejs_compat_v2"],
 	"preview_urls": false,
 	"ai": {
 		"binding": "AI"
+	},
+	"browser": {
+		"binding": "BROWSER"
 	},
 	"r2_buckets": [
 		{

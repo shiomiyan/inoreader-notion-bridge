@@ -5,6 +5,7 @@ interface __BaseEnv_Env {
 	WEB_CLIPPINGS: R2Bucket;
 	inoreader_notion_bridge_queue: Queue;
 	AI: Ai;
+	BROWSER: Fetcher;
 	INOREADER_RULE_NAME: string;
 	NOTION_API_KEY: string;
 	NOTION_DATA_SOURCE_ID: string;

@@ -95,7 +95,7 @@ async function processItem(
 	dataSourceId: string,
 ): Promise<NotionWriteResult> {
 	const existingPageId = await getPageIdByUrl(fetch, env.NOTION_API_KEY, dataSourceId, item.url);
-	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch);
+	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
 	const savedAt = new Date();
 	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
 

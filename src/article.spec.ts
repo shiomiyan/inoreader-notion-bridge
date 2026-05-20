@@ -1,8 +1,22 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { buildNotionMarkdown } from "./article";
+const { launchMock } = vi.hoisted(() => ({
+	launchMock: vi.fn(),
+}));
+
+vi.mock("@cloudflare/puppeteer", () => ({
+	default: {
+		launch: launchMock,
+	},
+}));
+
+import { buildNotionMarkdown, fetchArticleHtml, resolveArticleMarkdown } from "./article";
 
 describe("article", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
 	it("builds readable notion markdown and strips duplicated title heading", () => {
 		const markdown = buildNotionMarkdown(
 			{
@@ -93,4 +107,155 @@ title: [unterminated
 		expect(markdown).not.toContain("unterminated");
 		expect(markdown).toContain("本文です。");
 	});
+
+	it("uses Browser Rendering for x.com links", async () => {
+		const closeMock = vi.fn().mockResolvedValue(undefined);
+		const gotoMock = vi.fn().mockResolvedValue(undefined);
+		const contentMock = vi
+			.fn()
+			.mockResolvedValue("<html><body><article>Rendered post</article></body></html>");
+		launchMock.mockResolvedValue({
+			newPage: vi.fn().mockResolvedValue({
+				goto: gotoMock,
+				content: contentMock,
+			}),
+			close: closeMock,
+		});
+		const fetchMock = vi.fn<typeof fetch>();
+		const browserBinding = {} as Fetcher;
+
+		const article = await fetchArticleHtml(
+			"https://x.com/example/status/1",
+			fetchMock,
+			browserBinding,
+		);
+
+		expect(article.hostname).toBe("x.com");
+		expect(article.html).toContain("Rendered post");
+		expect(launchMock).toHaveBeenCalledWith(browserBinding);
+		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
+			waitUntil: "networkidle0",
+			timeout: 30_000,
+		});
+		expect(closeMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it("falls back to direct fetch when Browser Rendering fails for x.com", async () => {
+		launchMock.mockRejectedValue(new Error("browser down"));
+		const fetchMock = vi.fn<typeof fetch>(async (input) => {
+			const url = getUrl(input);
+
+			if (url === "https://x.com/example/status/1") {
+				return new Response("<html><body><p>Direct article</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html; charset=utf-8" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const article = await fetchArticleHtml(
+			"https://x.com/example/status/1",
+			fetchMock,
+			{} as Fetcher,
+		);
+
+		expect(article.hostname).toBe("x.com");
+		expect(article.html).toContain("Direct article");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+	});
+
+	it("falls back to summary HTML when Browser Rendering and direct fetch both fail for x.com", async () => {
+		launchMock.mockRejectedValue(new Error("browser down"));
+		const fetchMock = vi.fn<typeof fetch>(async (input) => {
+			const url = getUrl(input);
+
+			if (url === "https://x.com/example/status/1") {
+				return new Response("boom", { status: 500 });
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# タイトル\n\nsummary body",
+			}),
+		};
+
+		const markdown = await resolveArticleMarkdown(
+			{
+				title: "タイトル",
+				url: "https://x.com/example/status/1",
+				summaryHtml: "<p>Summary fallback</p>",
+			},
+			ai,
+			fetchMock,
+			{} as Fetcher,
+		);
+
+		expect(markdown).toContain("summary body");
+		expect(await ai.toMarkdown.mock.calls[0]?.[0].blob.text()).toContain("Summary fallback");
+	});
+
+	it("falls back to direct fetch when Browser Rendering binding is missing", async () => {
+		const fetchMock = vi.fn<typeof fetch>(async (input) => {
+			const url = getUrl(input);
+
+			if (url === "https://x.com/example/status/1") {
+				return new Response("<html><body><p>Direct article</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html; charset=utf-8" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const article = await fetchArticleHtml("https://x.com/example/status/1", fetchMock);
+
+		expect(article.html).toContain("Direct article");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://x.com/example/status/1",
+			expect.objectContaining({
+				redirect: "follow",
+			}),
+		);
+	});
+
+	it("does not use Browser Rendering for non-x.com links", async () => {
+		const fetchMock = vi.fn<typeof fetch>(async (input) => {
+			const url = getUrl(input);
+
+			if (url === "https://example.com/article") {
+				return new Response("<html><body><p>Article body</p></body></html>", {
+					status: 200,
+					headers: { "content-type": "text/html; charset=utf-8" },
+				});
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+
+		const article = await fetchArticleHtml("https://example.com/article", fetchMock, {} as Fetcher);
+
+		expect(article.hostname).toBe("example.com");
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(launchMock).not.toHaveBeenCalled();
+	});
 });
+
+function getUrl(input: RequestInfo | URL): string {
+	if (typeof input === "string") {
+		return input;
+	}
+
+	if (input instanceof URL) {
+		return input.toString();
+	}
+
+	return input.url;
+}

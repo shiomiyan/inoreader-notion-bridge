@@ -1,4 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { launchMock } = vi.hoisted(() => ({
+	launchMock: vi.fn(),
+}));
+
+vi.mock("@cloudflare/puppeteer", () => ({
+	default: {
+		launch: launchMock,
+	},
+}));
+
 import samplePayload from "./__fixtures__/inoreader.req.json";
 import type { Bindings } from "./index";
 import { app, processWebhookBatch } from "./index";
@@ -69,6 +80,7 @@ describe("inoreader notion bridge", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(new Date("2026-03-29T01:02:03.000Z"));
 		vi.spyOn(console, "error").mockImplementation(() => {});
+		launchMock.mockReset();
 	});
 
 	afterEach(() => {
@@ -310,6 +322,72 @@ categories:
 
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
 		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
+		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+	});
+
+	it("uses Browser Rendering for x.com pages during queue processing", async () => {
+		const gotoMock = vi.fn().mockResolvedValue(undefined);
+		const closeMock = vi.fn().mockResolvedValue(undefined);
+		launchMock.mockResolvedValue({
+			newPage: vi.fn().mockResolvedValue({
+				goto: gotoMock,
+				content: vi
+					.fn()
+					.mockResolvedValue("<html><body><article>Rendered post</article></body></html>"),
+			}),
+			close: closeMock,
+		});
+		const fetchMock = createFetchMock(async (input, init) => {
+			const url = getUrl(input);
+
+			if (url.startsWith("https://api.notion.com/")) {
+				expectNotionVersion(init);
+			}
+
+			if (url.startsWith("https://api.notion.com/v1/data_sources/notion-ds/query")) {
+				return jsonResponse({ results: [], has_more: false, next_cursor: null });
+			}
+
+			if (url === "https://api.notion.com/v1/pages" && init?.method === "POST") {
+				return jsonResponse({ id: "created-page" });
+			}
+
+			if (url === "https://x.com/example/status/1") {
+				throw new Error("direct fetch should not be used");
+			}
+
+			throw new Error(`Unhandled fetch for ${url}`);
+		});
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# テストテストテスト\n\n本文A",
+			}),
+		};
+
+		vi.stubGlobal("fetch", fetchMock);
+		const batch = createMessageBatch([
+			{
+				title: "テストテストテスト",
+				url: "https://x.com/example/status/1",
+				summaryHtml: "<p>Webhook summary body</p>",
+			},
+		]);
+
+		await processWebhookBatch(
+			batch,
+			createEnv({
+				AI: ai,
+			}),
+		);
+
+		const firstDocument = ai.toMarkdown.mock.calls[0][0];
+		expect(await firstDocument.blob.text()).toContain("Rendered post");
+		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
+			waitUntil: "networkidle0",
+			timeout: 30_000,
+		});
+		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});
 
@@ -906,6 +984,7 @@ function createEnv(
 		NOTION_API_KEY: string;
 		NOTION_DATA_SOURCE_ID: string;
 		INOREADER_RULE_NAME: string;
+		BROWSER: Fetcher;
 	}>,
 ): Bindings {
 	return {
@@ -917,6 +996,7 @@ function createEnv(
 		NOTION_API_KEY: "notion-secret",
 		NOTION_DATA_SOURCE_ID: "notion-ds",
 		INOREADER_RULE_NAME: "MASKED",
+		BROWSER: {} as Fetcher,
 		...overrides,
 	} as unknown as Bindings;
 }
