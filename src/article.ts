@@ -1,5 +1,5 @@
-import { Readability } from "@mozilla/readability";
 import puppeteer from "@cloudflare/puppeteer";
+import { Readability } from "@mozilla/readability";
 import { parseHTML } from "linkedom";
 import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
