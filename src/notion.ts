@@ -56,7 +56,15 @@ export const getPageIdByUrl = async (
 		page_size: 1,
 	});
 
-	return getPageId(result.results[0]) ?? null;
+	const pageId = getPageId(result.results[0]) ?? null;
+	console.log("Queried Notion page by URL", {
+		dataSourceId,
+		url,
+		found: pageId !== null,
+		pageId: pageId ?? undefined,
+	});
+
+	return pageId;
 };
 
 export const upsertPage = async (
@@ -71,6 +79,13 @@ export const upsertPage = async (
 	const savedAtIso = savedAt.toISOString();
 
 	if (!existingPageId) {
+		console.log("Creating Notion page", {
+			dataSourceId,
+			url: item.url,
+			title: item.title,
+			markdownLength: markdown.length,
+		});
+
 		try {
 			await request(fetchImpl, notionApiKey, "/v1/pages", {
 				method: "POST",
@@ -85,6 +100,14 @@ export const upsertPage = async (
 				throw error;
 			}
 
+			console.error("Notion page creation blocked by WAF; creating fallback page", {
+				dataSourceId,
+				url: item.url,
+				title: item.title,
+				status: error.status,
+				path: error.path,
+				cloudflareRayId: error.cloudflareRayId,
+			});
 			await createFallbackPage(fetchImpl, notionApiKey, dataSourceId, item, savedAtIso);
 
 			return {
@@ -105,6 +128,11 @@ export const upsertPage = async (
 		};
 	}
 
+	console.log("Updating Notion page properties", {
+		pageId: existingPageId,
+		url: item.url,
+		title: item.title,
+	});
 	await request(fetchImpl, notionApiKey, `/v1/pages/${existingPageId}`, {
 		method: "PATCH",
 		body: JSON.stringify({
@@ -112,6 +140,11 @@ export const upsertPage = async (
 		}),
 	});
 
+	console.log("Replacing Notion page markdown", {
+		pageId: existingPageId,
+		url: item.url,
+		markdownLength: markdown.length,
+	});
 	try {
 		await request(fetchImpl, notionApiKey, `/v1/pages/${existingPageId}/markdown`, {
 			method: "PATCH",
@@ -127,6 +160,13 @@ export const upsertPage = async (
 			throw error;
 		}
 
+		console.error("Notion markdown update blocked by WAF", {
+			pageId: existingPageId,
+			url: item.url,
+			status: error.status,
+			path: error.path,
+			cloudflareRayId: error.cloudflareRayId,
+		});
 		return {
 			outcome: "updated",
 			usedWafFallback: true,
@@ -203,6 +243,14 @@ const request = async <T>(
 	}
 
 	if (!response.ok) {
+		console.error("Notion API request failed", {
+			status: response.status,
+			path,
+			notionVersion: NOTION_VERSION,
+			wafBlocked,
+			cloudflareRayId: cloudflareRayId ?? undefined,
+			body,
+		});
 		throw new NotionApiError(
 			`Request failed: ${response.status}`,
 			response.status,

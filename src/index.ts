@@ -34,6 +34,11 @@ app.post("/", async (c) => {
 		return new Response("Bad Request", { status: 400 });
 	}
 
+	console.log("Accepted Inoreader webhook", {
+		itemCount: items.length,
+		items: items.map(summarizeItem),
+	});
+
 	try {
 		await c.env.inoreader_notion_bridge_queue.sendBatch(items.map((item) => ({ body: item })));
 	} catch (error) {
@@ -52,32 +57,62 @@ export async function processWebhookBatch(
 	env: Bindings,
 ): Promise<void> {
 	const startedAt = Date.now();
+	console.log("Starting queue batch", {
+		queue: batch.queue,
+		size: batch.messages.length,
+	});
 
 	try {
 		const dataSourceId = getDataSourceId(env);
 
 		for (const message of batch.messages) {
+			const itemContext = summarizeItem(message.body);
+			const messageStartedAt = Date.now();
+			console.log("Processing queued item", {
+				messageId: message.id,
+				attempts: message.attempts,
+				item: itemContext,
+			});
+
 			try {
-				const result = await processItem(message.body, env, dataSourceId);
+				const result = await processItem(message.body, env, dataSourceId, {
+					messageId: message.id,
+					attempts: message.attempts,
+				});
 				if (result.usedWafFallback) {
 					console.error("Notion request blocked by Cloudflare WAF; saved fallback page", {
 						messageId: message.id,
 						attempts: message.attempts,
-						item: message.body,
+						item: itemContext,
 						wafBlock: result.wafBlock,
 					});
 				}
+				console.log("Processed queued item", {
+					messageId: message.id,
+					attempts: message.attempts,
+					item: itemContext,
+					outcome: result.outcome,
+					usedWafFallback: result.usedWafFallback,
+					durationMs: Date.now() - messageStartedAt,
+				});
 				message.ack();
 			} catch (error) {
 				console.error("Failed to process queued item", {
 					messageId: message.id,
 					attempts: message.attempts,
-					item: message.body,
+					item: itemContext,
 					error: serializeError(error),
+					durationMs: Date.now() - messageStartedAt,
 				});
 				message.retry();
 			}
 		}
+
+		console.log("Finished queue batch", {
+			queue: batch.queue,
+			size: batch.messages.length,
+			durationMs: Date.now() - startedAt,
+		});
 	} catch (error) {
 		console.error("Failed to process queue batch", {
 			queue: batch.queue,
@@ -93,22 +128,49 @@ async function processItem(
 	item: ParsedInoreaderItem,
 	env: Bindings,
 	dataSourceId: string,
+	context?: {
+		messageId: string;
+		attempts: number;
+	},
 ): Promise<NotionWriteResult> {
+	const itemContext = summarizeItem(item);
+	console.log("Resolving Notion page state", {
+		...context,
+		item: itemContext,
+	});
 	const existingPageId = await getPageIdByUrl(fetch, env.NOTION_API_KEY, dataSourceId, item.url);
+	console.log("Resolved Notion page state", {
+		...context,
+		item: itemContext,
+		existingPageId: existingPageId ?? undefined,
+	});
 	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
 	const savedAt = new Date();
 	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
+	console.log("Prepared markdown payloads", {
+		...context,
+		item: itemContext,
+		articleMarkdownLength: articleMarkdown.length,
+		notionMarkdownLength: notionMarkdown.length,
+		savedAt: savedAt.toISOString(),
+	});
 
 	try {
-		await saveArchiveMarkdown(env.WEB_CLIPPINGS, item, notionMarkdown, savedAt);
+		const archiveKey = await saveArchiveMarkdown(env.WEB_CLIPPINGS, item, notionMarkdown, savedAt);
+		console.log("Archived markdown to R2", {
+			...context,
+			item: itemContext,
+			archiveKey,
+		});
 	} catch (error) {
 		console.error("Failed to archive markdown to R2", {
-			item,
+			...context,
+			item: itemContext,
 			error: serializeError(error),
 		});
 	}
 
-	return await upsertPage(
+	const notionResult = await upsertPage(
 		fetch,
 		env.NOTION_API_KEY,
 		dataSourceId,
@@ -117,6 +179,16 @@ async function processItem(
 		existingPageId,
 		savedAt,
 	);
+
+	console.log("Persisted page to Notion", {
+		...context,
+		item: itemContext,
+		existingPageId: existingPageId ?? undefined,
+		outcome: notionResult.outcome,
+		usedWafFallback: notionResult.usedWafFallback,
+	});
+
+	return notionResult;
 }
 
 function serializeError(error: unknown) {
@@ -148,6 +220,25 @@ function serializeError(error: unknown) {
 
 	return {
 		message: String(error),
+	};
+}
+
+function summarizeItem(item: ParsedInoreaderItem) {
+	let hostname: string | undefined;
+
+	try {
+		hostname = new URL(item.url).hostname;
+	} catch {}
+
+	return {
+		title: item.title,
+		url: item.url,
+		hostname,
+		hasSummaryHtml: Boolean(item.summaryHtml),
+		summaryHtmlLength: item.summaryHtml?.length,
+		author: item.author,
+		published: item.published,
+		feedTitle: item.feedTitle,
 	};
 }
 
