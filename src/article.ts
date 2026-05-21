@@ -1,4 +1,6 @@
+import { Readability } from "@mozilla/readability";
 import puppeteer from "@cloudflare/puppeteer";
+import { parseHTML } from "linkedom";
 import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
 
@@ -128,10 +130,11 @@ export async function convertHtmlToMarkdown(
 	html: string,
 	hostname: string,
 ): Promise<string> {
+	const readableHtml = extractReadableHtml(html);
 	const result = await ai.toMarkdown(
 		{
 			name: "article.html",
-			blob: new Blob([html], { type: "text/html" }),
+			blob: new Blob([readableHtml], { type: "text/html" }),
 		},
 		{
 			conversionOptions: {
@@ -152,6 +155,38 @@ export async function convertHtmlToMarkdown(
 	}
 
 	return markdown;
+}
+
+function extractReadableHtml(html: string): string {
+	try {
+		const { document } = parseHTML(html);
+		const article = new Readability(document).parse();
+		const content = article?.content?.trim();
+
+		if (!content) {
+			return html;
+		}
+
+		return selectPrimaryContent(content);
+	} catch {
+		return html;
+	}
+}
+
+function selectPrimaryContent(content: string): string {
+	try {
+		const { document } = parseHTML(content);
+		const preferredRoot = document.querySelector("article, main");
+		const preferredContent = preferredRoot?.outerHTML?.trim();
+
+		if (!preferredContent) {
+			return content;
+		}
+
+		return preferredContent;
+	} catch {
+		return content;
+	}
 }
 
 /**
