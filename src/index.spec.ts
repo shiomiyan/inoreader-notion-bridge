@@ -328,12 +328,14 @@ categories:
 	it("uses Browser Rendering for x.com pages during queue processing", async () => {
 		const gotoMock = vi.fn().mockResolvedValue(undefined);
 		const closeMock = vi.fn().mockResolvedValue(undefined);
+		const titleMock = vi.fn().mockResolvedValue("Rendered title");
 		launchMock.mockResolvedValue({
 			newPage: vi.fn().mockResolvedValue({
 				goto: gotoMock,
 				content: vi
 					.fn()
 					.mockResolvedValue("<html><body><article>Rendered post</article></body></html>"),
+				title: titleMock,
 			}),
 			close: closeMock,
 		});
@@ -387,6 +389,7 @@ categories:
 			waitUntil: "networkidle0",
 			timeout: 30_000,
 		});
+		expect(titleMock).toHaveBeenCalledTimes(1);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});
