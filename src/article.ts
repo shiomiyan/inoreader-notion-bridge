@@ -1,6 +1,4 @@
 import puppeteer from "@cloudflare/puppeteer";
-import { Readability } from "@mozilla/readability";
-import { parseHTML } from "linkedom";
 import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
 
@@ -9,7 +7,6 @@ export type MarkdownAi = Pick<Env["AI"], "toMarkdown">;
 export type ArticleHtml = {
 	html: string;
 	hostname: string;
-	title?: string;
 };
 
 const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
@@ -107,12 +104,9 @@ async function fetchArticleHtmlWithBrowserRendering(
 			throw new Error("empty HTML body");
 		}
 
-		const title = (await page.title()).trim() || undefined;
-
 		return {
 			html,
 			hostname: new URL(url).hostname,
-			title,
 		};
 	} catch (error) {
 		throw new Error(
@@ -130,11 +124,10 @@ export async function convertHtmlToMarkdown(
 	html: string,
 	hostname: string,
 ): Promise<string> {
-	const readableHtml = extractReadableHtml(html);
 	const result = await ai.toMarkdown(
 		{
 			name: "article.html",
-			blob: new Blob([readableHtml], { type: "text/html" }),
+			blob: new Blob([html], { type: "text/html" }),
 		},
 		{
 			conversionOptions: {
@@ -155,38 +148,6 @@ export async function convertHtmlToMarkdown(
 	}
 
 	return markdown;
-}
-
-function extractReadableHtml(html: string): string {
-	try {
-		const { document } = parseHTML(html);
-		const article = new Readability(document).parse();
-		const content = article?.content?.trim();
-
-		if (!content) {
-			return html;
-		}
-
-		return selectPrimaryContent(content);
-	} catch {
-		return html;
-	}
-}
-
-function selectPrimaryContent(content: string): string {
-	try {
-		const { document } = parseHTML(content);
-		const preferredRoot = document.querySelector("article, main");
-		const preferredContent = preferredRoot?.outerHTML?.trim();
-
-		if (!preferredContent) {
-			return content;
-		}
-
-		return preferredContent;
-	} catch {
-		return content;
-	}
 }
 
 /**

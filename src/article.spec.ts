@@ -10,12 +10,7 @@ vi.mock("@cloudflare/puppeteer", () => ({
 	},
 }));
 
-import {
-	buildNotionMarkdown,
-	convertHtmlToMarkdown,
-	fetchArticleHtml,
-	resolveArticleMarkdown,
-} from "./article";
+import { buildNotionMarkdown, fetchArticleHtml, resolveArticleMarkdown } from "./article";
 
 describe("article", () => {
 	beforeEach(() => {
@@ -119,12 +114,10 @@ title: [unterminated
 		const contentMock = vi
 			.fn()
 			.mockResolvedValue("<html><body><article>Rendered post</article></body></html>");
-		const titleMock = vi.fn().mockResolvedValue("Rendered title");
 		launchMock.mockResolvedValue({
 			newPage: vi.fn().mockResolvedValue({
 				goto: gotoMock,
 				content: contentMock,
-				title: titleMock,
 			}),
 			close: closeMock,
 		});
@@ -139,13 +132,11 @@ title: [unterminated
 
 		expect(article.hostname).toBe("x.com");
 		expect(article.html).toContain("Rendered post");
-		expect(article.title).toBe("Rendered title");
 		expect(launchMock).toHaveBeenCalledWith(browserBinding);
 		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
 			waitUntil: "networkidle0",
 			timeout: 30_000,
 		});
-		expect(titleMock).toHaveBeenCalledTimes(1);
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(fetchMock).not.toHaveBeenCalled();
 	});
@@ -207,90 +198,6 @@ title: [unterminated
 
 		expect(markdown).toContain("summary body");
 		expect(await ai.toMarkdown.mock.calls[0]?.[0].blob.text()).toContain("Summary fallback");
-	});
-
-	it("extracts readable article content before markdown conversion", async () => {
-		const ai = {
-			toMarkdown: vi.fn().mockResolvedValue({
-				format: "markdown",
-				data: "# Title\n\nArticle body",
-			}),
-		};
-
-		await convertHtmlToMarkdown(
-			ai,
-			`<!DOCTYPE html>
-<html>
-	<body>
-		<nav>Site navigation</nav>
-		<main>
-			<article>
-				<h1>Title</h1>
-				<p>Article body</p>
-			</article>
-		</main>
-		<footer>Footer links</footer>
-	</body>
-</html>`,
-			"example.com",
-		);
-
-		const convertedHtml = await ai.toMarkdown.mock.calls[0]?.[0].blob.text();
-		expect(convertedHtml).toContain("Article body");
-		expect(convertedHtml).not.toContain("Site navigation");
-		expect(convertedHtml).not.toContain("Footer links");
-	});
-
-	it("falls back to the original HTML when readability extraction returns no content", async () => {
-		const ai = {
-			toMarkdown: vi.fn().mockResolvedValue({
-				format: "markdown",
-				data: "body",
-			}),
-		};
-		const html = "<p>Too short</p>";
-
-		await convertHtmlToMarkdown(ai, html, "example.com");
-
-		expect(await ai.toMarkdown.mock.calls[0]?.[0].blob.text()).toBe(html);
-	});
-
-	it("extracts readable summary HTML before markdown conversion fallback", async () => {
-		launchMock.mockRejectedValue(new Error("browser down"));
-		const fetchMock = vi.fn<typeof fetch>(async () => new Response("boom", { status: 500 }));
-		const ai = {
-			toMarkdown: vi.fn().mockResolvedValue({
-				format: "markdown",
-				data: "# タイトル\n\nsummary body",
-			}),
-		};
-
-		await resolveArticleMarkdown(
-			{
-				title: "タイトル",
-				url: "https://x.com/example/status/1",
-				summaryHtml: `<!DOCTYPE html>
-<html>
-	<body>
-		<header>summary nav</header>
-		<main>
-			<article>
-				<h1>Summary title</h1>
-				<p>Summary fallback body with enough content to be recognized by readability.</p>
-				<p>Another sentence keeps the summary route realistic.</p>
-			</article>
-		</main>
-	</body>
-</html>`,
-			},
-			ai,
-			fetchMock,
-			{} as Fetcher,
-		);
-
-		const convertedHtml = await ai.toMarkdown.mock.calls[0]?.[0].blob.text();
-		expect(convertedHtml).toContain("Summary fallback body");
-		expect(convertedHtml).not.toContain("summary nav");
 	});
 
 	it("falls back to direct fetch when Browser Rendering binding is missing", async () => {
