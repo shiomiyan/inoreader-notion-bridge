@@ -84,6 +84,67 @@ tags:
 		expect(closeMock).toHaveBeenCalledTimes(1);
 	});
 
+	it("passes extracted article HTML to AI markdown conversion", async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => htmlResponse("Article body"));
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# 記事タイトル\n\n本文です。",
+			}),
+		};
+
+		await resolveArticleMarkdown(ARTICLE, ai, fetchMock);
+
+		const firstDocument = ai.toMarkdown.mock.calls[0]?.[0];
+		expect(firstDocument.name).toBe("article.html");
+		expect(firstDocument.blob.type).toBe("text/html");
+
+		const html = await firstDocument.blob.text();
+		expect(html).toContain("Article body");
+		expect(html).toContain("readability-page-1");
+		expect(html).not.toContain("Navigation links");
+		expect(html).not.toContain("Related links");
+		expect(html).not.toContain("Footer links");
+	});
+
+	it("falls back to raw HTML when Readability returns empty content", async () => {
+		vi.resetModules();
+		vi.doMock("@cloudflare/puppeteer", () => ({
+			default: {
+				launch: launchMock,
+			},
+		}));
+		vi.doMock("@mozilla/readability", () => ({
+			Readability: class {
+				parse() {
+					return { content: "   " };
+				}
+			},
+		}));
+
+		const { resolveArticleMarkdown: resolveArticleMarkdownWithFallback } = await import(
+			"./article"
+		);
+		const fetchMock = vi.fn<typeof fetch>(async () => htmlResponse("Article body"));
+		const ai = {
+			toMarkdown: vi.fn().mockResolvedValue({
+				format: "markdown",
+				data: "# 記事タイトル\n\n本文です。",
+			}),
+		};
+
+		await resolveArticleMarkdownWithFallback(ARTICLE, ai, fetchMock);
+
+		const html = await ai.toMarkdown.mock.calls[0]?.[0].blob.text();
+		expect(html).toContain("Navigation links");
+		expect(html).toContain("Related links");
+		expect(html).toContain("Footer links");
+		expect(html).toContain("Article body");
+
+		vi.doUnmock("@mozilla/readability");
+		vi.doUnmock("@cloudflare/puppeteer");
+	});
+
 	it("falls back to direct fetch when Browser Rendering fails", async () => {
 		launchMock.mockRejectedValue(new Error("browser down"));
 		const fetchMock = vi.fn<typeof fetch>(async () => htmlResponse("Direct article"));
@@ -143,7 +204,7 @@ function createItem(overrides: Partial<ParsedInoreaderItem> = {}): ParsedInoread
 }
 
 function htmlResponseBody(body: string): string {
-	return `<html><body><p>${body}</p></body></html>`;
+	return `<!DOCTYPE html><html><body><header><nav>Navigation links</nav></header><main><article><h1>Example title</h1><p>${body}</p><p>Second paragraph with more detail for scoring.</p></article><aside>Related links</aside></main><footer>Footer links</footer></body></html>`;
 }
 
 function htmlResponse(body: string): Response {

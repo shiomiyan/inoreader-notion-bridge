@@ -236,7 +236,11 @@ categories:
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
 		expect(firstDocument.name).toBe("article.html");
 		expect(firstDocument.blob.type).toBe("text/html");
-		expect(await firstDocument.blob.text()).toContain("Article body");
+		const firstHtml = await firstDocument.blob.text();
+		expect(firstHtml).toContain("Article body");
+		expect(firstHtml).not.toContain("Navigation links");
+		expect(firstHtml).not.toContain("Related links");
+		expect(firstHtml).not.toContain("Footer links");
 		expect(ai.toMarkdown.mock.calls[0][1]).toEqual({
 			conversionOptions: {
 				html: {
@@ -323,7 +327,9 @@ categories:
 				goto: gotoMock,
 				content: vi
 					.fn()
-					.mockResolvedValue("<html><body><article>Rendered post</article></body></html>"),
+					.mockResolvedValue(
+						"<!DOCTYPE html><html><body><header><nav>Navigation links</nav></header><main><article><h1>Post title</h1><p>Rendered post</p><p>Second rendered paragraph.</p></article><aside>Related links</aside></main><footer>Footer links</footer></body></html>",
+					),
 			}),
 			close: closeMock,
 		});
@@ -366,7 +372,10 @@ categories:
 		);
 
 		const firstDocument = ai.toMarkdown.mock.calls[0][0];
-		expect(await firstDocument.blob.text()).toContain("Rendered post");
+		const firstHtml = await firstDocument.blob.text();
+		expect(firstHtml).toContain("Rendered post");
+		expect(firstHtml).not.toContain("Navigation links");
+		expect(firstHtml).not.toContain("Related links");
 		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
 			waitUntil: "networkidle0",
 			timeout: 30_000,
@@ -1044,10 +1053,13 @@ function getUrl(input: Parameters<typeof fetch>[0]): string {
 }
 
 function htmlResponse(body: string): Response {
-	return new Response(`<html><body><p>${body}</p></body></html>`, {
-		status: 200,
-		headers: { "content-type": "text/html" },
-	});
+	return new Response(
+		`<!DOCTYPE html><html><body><header><nav>Navigation links</nav></header><main><article><h1>Example title</h1><p>${body}</p><p>Second paragraph with more detail for scoring.</p></article><aside>Related links</aside></main><footer>Footer links</footer></body></html>`,
+		{
+			status: 200,
+			headers: { "content-type": "text/html" },
+		},
+	);
 }
 
 function jsonResponse(body: unknown): Response {
@@ -1058,9 +1070,14 @@ function jsonResponse(body: unknown): Response {
 }
 
 function getNotionCreateBody(fetchMock: MockFetch): NotionRequestBody | undefined {
-	const calls = (fetchMock as unknown as { mock: { calls: Array<[Parameters<typeof fetch>[0], RequestInit | undefined]> } }).mock.calls;
+	const calls = (
+		fetchMock as unknown as {
+			mock: { calls: Array<[Parameters<typeof fetch>[0], RequestInit | undefined]> };
+		}
+	).mock.calls;
 	const createCall = calls.find(
-		([input, init]) => getUrl(input) === "https://api.notion.com/v1/pages" && init?.method === "POST",
+		([input, init]) =>
+			getUrl(input) === "https://api.notion.com/v1/pages" && init?.method === "POST",
 	);
 
 	return parseJson<NotionRequestBody>(createCall?.[1]?.body);

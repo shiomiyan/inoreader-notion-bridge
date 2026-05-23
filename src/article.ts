@@ -1,4 +1,6 @@
 import puppeteer from "@cloudflare/puppeteer";
+import { Readability } from "@mozilla/readability";
+import { DOMParser } from "linkedom";
 import { parseDocument, stringify } from "yaml";
 import type { ParsedInoreaderItem } from "./inoreader";
 
@@ -25,10 +27,11 @@ export async function resolveArticleMarkdown(
 	fetcher?: Fetcher,
 ): Promise<string> {
 	const articleHtml = await fetchArticleHtml(inoreader.url, fetchImpl, fetcher);
+	const markdownSourceHtml = extractArticleContentHtml(articleHtml.html) ?? articleHtml.html;
 	const result = await ai.toMarkdown(
 		{
 			name: "article.html",
-			blob: new Blob([articleHtml.html], { type: "text/html" }),
+			blob: new Blob([markdownSourceHtml], { type: "text/html" }),
 		},
 		{
 			conversionOptions: {
@@ -49,6 +52,38 @@ export async function resolveArticleMarkdown(
 	}
 
 	return markdown;
+}
+
+function extractArticleContentHtml(html: string): string | null {
+	const document = parseHtmlDocument(html);
+	if (!document) {
+		return null;
+	}
+
+	try {
+		const article = new Readability(document).parse();
+		const content = article?.content?.trim();
+
+		if (!content) {
+			return null;
+		}
+
+		return wrapArticleHtml(content);
+	} catch {
+		return null;
+	}
+}
+
+function parseHtmlDocument(html: string) {
+	try {
+		return new DOMParser().parseFromString(html, "text/html");
+	} catch {
+		return null;
+	}
+}
+
+function wrapArticleHtml(content: string): string {
+	return `<!DOCTYPE html><html><body>${content}</body></html>`;
 }
 
 export async function fetchArticleHtml(
