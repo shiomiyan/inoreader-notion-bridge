@@ -1,13 +1,8 @@
-name: Dependabot Auto Merge
+name: Dependabot auto-merge
 
 on:
   pull_request:
     branches: [master]
-    types:
-      - opened
-      - reopened
-      - synchronize
-      - ready_for_review
 
 permissions:
   contents: write
@@ -43,8 +38,4 @@ jobs:
           # Use the ephemeral workflow token only. Do not use a PAT here.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
-        run: |
-          gh pr merge \
-            --auto \
-            --merge \
-            "${PR_URL}"
+        run: gh pr merge --auto --merge "$PR_URL"
