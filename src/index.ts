@@ -144,14 +144,33 @@ async function processItem(
 		item: itemContext,
 		existingPageId: existingPageId ?? undefined,
 	});
-	const articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
 	const savedAt = new Date();
-	const notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
+	let articleMarkdown = "";
+	let notionMarkdown: string;
+
+	try {
+		articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
+		notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
+	} catch (error) {
+		console.error("Failed to resolve article markdown", {
+			...context,
+			item: itemContext,
+			error: serializeError(error),
+		});
+		notionMarkdown = buildNotionMarkdown(item, "", savedAt);
+		console.log("Falling back to URL-only page content", {
+			...context,
+			item: itemContext,
+			savedAt: savedAt.toISOString(),
+		});
+	}
+
 	console.log("Prepared markdown payloads", {
 		...context,
 		item: itemContext,
 		articleMarkdownLength: articleMarkdown.length,
 		notionMarkdownLength: notionMarkdown.length,
+		hasArticleContent: articleMarkdown.length > 0,
 		savedAt: savedAt.toISOString(),
 	});
 
@@ -234,8 +253,6 @@ function summarizeItem(item: ParsedInoreaderItem) {
 		title: item.title,
 		url: item.url,
 		hostname,
-		hasSummaryHtml: Boolean(item.summaryHtml),
-		summaryHtmlLength: item.summaryHtml?.length,
 		author: item.author,
 		published: item.published,
 		feedTitle: item.feedTitle,

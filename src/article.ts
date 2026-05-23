@@ -13,23 +13,42 @@ const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
 const BROWSER_RENDERING_TIMEOUT_MS = 30_000;
 const BROWSER_RENDERING_HOSTS = ["x.com"];
 
+type BrowserRenderingContext = AsyncDisposable & {
+	browser: Awaited<ReturnType<typeof puppeteer.launch>>;
+	page: Awaited<ReturnType<Awaited<ReturnType<typeof puppeteer.launch>>["newPage"]>>;
+};
+
 export async function resolveArticleMarkdown(
-	item: ParsedInoreaderItem,
+	inoreader: ParsedInoreaderItem,
 	ai: MarkdownAi,
 	fetchImpl: typeof fetch,
-	browserBinding?: Fetcher,
+	fetcher?: Fetcher,
 ): Promise<string> {
-	try {
-		const articleHtml = await fetchArticleHtml(item.url, fetchImpl, browserBinding);
-		return await convertHtmlToMarkdown(ai, articleHtml.html, articleHtml.hostname);
-	} catch (error) {
-		if (!item.summaryHtml) {
-			throw error;
-		}
+	const articleHtml = await fetchArticleHtml(inoreader.url, fetchImpl, fetcher);
+	const result = await ai.toMarkdown(
+		{
+			name: "article.html",
+			blob: new Blob([articleHtml.html], { type: "text/html" }),
+		},
+		{
+			conversionOptions: {
+				html: {
+					hostname: articleHtml.hostname,
+				},
+			},
+		},
+	);
 
-		const hostname = new URL(item.url).hostname;
-		return await convertHtmlToMarkdown(ai, item.summaryHtml, hostname);
+	if (result.format === "error") {
+		throw new Error(`Markdown conversion failed: ${result.error}`);
 	}
+
+	const markdown = result.data.trim();
+	if (!markdown) {
+		throw new Error("Markdown conversion returned empty content");
+	}
+
+	return markdown;
 }
 
 export async function fetchArticleHtml(
@@ -86,20 +105,17 @@ async function fetchArticleHtmlDirect(url: string, fetchImpl: typeof fetch): Pro
 
 async function fetchArticleHtmlWithBrowserRendering(
 	url: string,
-	browserBinding: Fetcher,
+	fetcher: Fetcher,
 ): Promise<ArticleHtml> {
-	let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
-
 	try {
-		browser = await puppeteer.launch(browserBinding);
-		const page = await browser.newPage();
+		await using ctx = await useBrowserContext(fetcher);
 
-		await page.goto(url, {
+		await ctx.page.goto(url, {
 			waitUntil: "networkidle0",
 			timeout: BROWSER_RENDERING_TIMEOUT_MS,
 		});
 
-		const html = await page.content();
+		const html = await ctx.page.content();
 		if (!html.trim()) {
 			throw new Error("empty HTML body");
 		}
@@ -112,42 +128,26 @@ async function fetchArticleHtmlWithBrowserRendering(
 		throw new Error(
 			`Failed to fetch article HTML with Browser Rendering: ${toErrorMessage(error)}`,
 		);
-	} finally {
-		if (browser) {
-			await browser.close().catch(() => undefined);
-		}
 	}
 }
 
-export async function convertHtmlToMarkdown(
-	ai: MarkdownAi,
-	html: string,
-	hostname: string,
-): Promise<string> {
-	const result = await ai.toMarkdown(
-		{
-			name: "article.html",
-			blob: new Blob([html], { type: "text/html" }),
-		},
-		{
-			conversionOptions: {
-				html: {
-					hostname,
-				},
+async function useBrowserContext(browserBinding: Fetcher): Promise<BrowserRenderingContext> {
+	const browser = await puppeteer.launch(browserBinding);
+
+	try {
+		const page = await browser.newPage();
+
+		return {
+			browser,
+			page,
+			async [Symbol.asyncDispose]() {
+				await browser.close().catch(() => undefined);
 			},
-		},
-	);
-
-	if (result.format === "error") {
-		throw new Error(`Markdown conversion failed: ${result.error}`);
+		};
+	} catch (error) {
+		await browser.close().catch(() => undefined);
+		throw error;
 	}
-
-	const markdown = result.data.trim();
-	if (!markdown) {
-		throw new Error("Markdown conversion returned empty content");
-	}
-
-	return markdown;
 }
 
 /**

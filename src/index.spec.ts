@@ -126,7 +126,6 @@ describe("inoreader notion bridge", () => {
 				body: {
 					title: "テストテストテスト",
 					url: "https://example.com/",
-					summaryHtml: "<div><p>Webhook summary body</p></div>",
 					author: "Example Author",
 					published: 1_711_676_800,
 					feedTitle: "Example Feed",
@@ -136,7 +135,6 @@ describe("inoreader notion bridge", () => {
 				body: {
 					title: "2本目の記事",
 					url: "https://example.com/second",
-					summaryHtml: "<div><p>Webhook summary body</p></div>",
 					author: "Example Author",
 					published: 1_711_676_800,
 					feedTitle: "Example Feed",
@@ -168,16 +166,8 @@ describe("inoreader notion bridge", () => {
 
 	it("creates pages for multiple queued items and converts fetched HTML with AI", async () => {
 		const items: ParsedInoreaderItem[] = [
-			{
-				title: "テストテストテスト",
-				url: "https://example.com/",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
-			{
-				title: "2本目の記事",
-				url: "https://example.com/second",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
+			createItem(),
+			createItem({ title: "2本目の記事", url: "https://example.com/second" }),
 		];
 
 		const fetchMock = createFetchMock(async (input, init) => {
@@ -196,10 +186,7 @@ describe("inoreader notion bridge", () => {
 			}
 
 			if (url === "https://example.com/" || url === "https://example.com/second") {
-				return new Response("<html><body><h1>Ignored</h1><p>Article body</p></body></html>", {
-					status: 200,
-					headers: { "content-type": "text/html; charset=utf-8" },
-				});
+				return htmlResponse("Article body");
 			}
 
 			throw new Error(`Unhandled fetch for ${url}`);
@@ -279,7 +266,7 @@ categories:
 		expect(batch.messages[0].retry).not.toHaveBeenCalled();
 	});
 
-	it("falls back to summary HTML when fetching article HTML fails", async () => {
+	it("saves a URL-only page when fetching article HTML fails", async () => {
 		const fetchMock = createFetchMock(async (input, init) => {
 			const url = getUrl(input);
 
@@ -303,26 +290,29 @@ categories:
 		});
 
 		const ai = {
-			toMarkdown: vi.fn().mockResolvedValue({
-				format: "markdown",
-				data: "# テストテストテスト\n\nsummary body",
-			}),
+			toMarkdown: vi.fn(),
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const batch = createMessageBatch([
-			{
-				title: "テストテストテスト",
-				url: "https://example.com/",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
-		]);
+		const batch = createMessageBatch([createItem()]);
 
 		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
-		const firstDocument = ai.toMarkdown.mock.calls[0][0];
-		expect(await firstDocument.blob.text()).toContain("Webhook summary body");
+		const createBody = getNotionCreateBody(fetchMock);
+		expect(createBody?.properties?.url?.url).toBe("https://example.com/");
+		expect(createBody?.markdown).toContain("title: テストテストテスト");
+		expect(createBody?.markdown).toContain("source: https://example.com/");
+		expect(createBody?.markdown).not.toContain("summary body");
+		expect(ai.toMarkdown).not.toHaveBeenCalled();
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
+		expect(console.error).toHaveBeenCalledWith(
+			"Failed to resolve article markdown",
+			expect.objectContaining({
+				error: expect.objectContaining({
+					message: "Failed to fetch article HTML: received 500",
+				}),
+			}),
+		);
 	});
 
 	it("uses Browser Rendering for x.com pages during queue processing", async () => {
@@ -366,13 +356,7 @@ categories:
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const batch = createMessageBatch([
-			{
-				title: "テストテストテスト",
-				url: "https://x.com/example/status/1",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
-		]);
+		const batch = createMessageBatch([createItem({ url: "https://x.com/example/status/1" })]);
 
 		await processWebhookBatch(
 			batch,
@@ -440,13 +424,7 @@ categories:
 		};
 
 		vi.stubGlobal("fetch", fetchMock);
-		const batch = createMessageBatch([
-			{
-				title: "テストテストテスト",
-				url: "https://example.com/",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
-		]);
+		const batch = createMessageBatch([createItem()]);
 
 		await processWebhookBatch(batch, createEnv({ AI: ai }));
 
@@ -459,16 +437,8 @@ categories:
 
 	it("retries only the failed queued item", async () => {
 		const items: ParsedInoreaderItem[] = [
-			{
-				title: "テストテストテスト",
-				url: "https://example.com/",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
-			{
-				title: "成功する記事",
-				url: "https://example.com/success",
-				summaryHtml: "<p>Webhook summary body</p>",
-			},
+			createItem(),
+			createItem({ title: "成功する記事", url: "https://example.com/success" }),
 		];
 
 		const fetchMock = createFetchMock(async (input, init) => {
@@ -1039,6 +1009,14 @@ function createFetchMock(implementation: Parameters<typeof vi.fn<typeof fetch>>[
 	return mock as unknown as MockFetch;
 }
 
+function createItem(overrides: Partial<ParsedInoreaderItem> = {}): ParsedInoreaderItem {
+	return {
+		title: "テストテストテスト",
+		url: "https://example.com/",
+		...overrides,
+	};
+}
+
 function createMessageBatch(items: ParsedInoreaderItem[]): QueueBatchStub {
 	const messages = items.map(
 		(item, index) =>
@@ -1065,11 +1043,27 @@ function getUrl(input: Parameters<typeof fetch>[0]): string {
 	return input instanceof Request ? input.url : String(input);
 }
 
+function htmlResponse(body: string): Response {
+	return new Response(`<html><body><p>${body}</p></body></html>`, {
+		status: 200,
+		headers: { "content-type": "text/html" },
+	});
+}
+
 function jsonResponse(body: unknown): Response {
 	return new Response(JSON.stringify(body), {
 		status: 200,
 		headers: { "content-type": "application/json" },
 	});
+}
+
+function getNotionCreateBody(fetchMock: MockFetch): NotionRequestBody | undefined {
+	const calls = (fetchMock as unknown as { mock: { calls: Array<[Parameters<typeof fetch>[0], RequestInit | undefined]> } }).mock.calls;
+	const createCall = calls.find(
+		([input, init]) => getUrl(input) === "https://api.notion.com/v1/pages" && init?.method === "POST",
+	);
+
+	return parseJson<NotionRequestBody>(createCall?.[1]?.body);
 }
 
 function parseJson<T>(body: BodyInit | null | undefined): T | undefined {

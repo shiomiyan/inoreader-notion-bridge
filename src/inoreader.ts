@@ -24,7 +24,6 @@ export type StreamContents = {
 export type ParsedInoreaderItem = {
 	title: string;
 	url: string;
-	summaryHtml?: string;
 	author?: string;
 	published?: number;
 	feedTitle?: string;
@@ -48,7 +47,6 @@ export function parseWebhookPayload(body: StreamContents): ParsedInoreaderItem[]
 			{
 				title,
 				url,
-				summaryHtml: item.summary?.content?.trim() || undefined,
 				author: item.author?.trim() || undefined,
 				published: item.published,
 				feedTitle: item.origin?.title?.trim() || undefined,
