@@ -12,8 +12,8 @@ importers:
         specifier: ^0.6.0
         version: 0.6.0
       hono:
-        specifier: ^4.12.18
-        version: 4.12.18
+        specifier: ^4.12.19
+        version: 4.12.19
       linkedom:
         specifier: ^0.18.12
         version: 0.18.12
@@ -927,8 +927,8 @@ packages:
     resolution: {integrity: sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg==}
     engines: {node: '>= 14'}
 
-  hono@4.12.18:
-    resolution: {integrity: sha512-RWzP96k/yv0PQfyXnWjs6zot20TqfpfsNXhOnev8d1InAxubW93L11/oNUc3tQqn2G0bSdAOBpX+2uDFHV7kdQ==}
+  hono@4.12.19:
+    resolution: {integrity: sha512-xa3eYXYXx68XTT4hZ7dRzsXBhaq85ToSrlUJNoR0gwz/1Ap/CNwX47wfvV7pc/xWhjKVVkLT7zBJy8chhNguqQ==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@3.0.3:
@@ -1100,8 +1100,8 @@ packages:
     resolution: {integrity: sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A==}
     engines: {node: '>=12'}
 
-  postcss@8.5.14:
-    resolution: {integrity: sha512-SoSL4+OSEtR99LHFZQiJLkT59C5B1amGO1NzTwj7TT1qCUgUO6hxOvzkOYxD+vMrXBM3XJIKzokoERdqQq/Zmg==}
+  postcss@8.5.15:
+    resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
     engines: {node: ^10 || ^12 || >=14}
 
   progress@2.0.3:
@@ -2077,7 +2077,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  hono@4.12.18: {}
+  hono@4.12.19: {}
 
   html-escaper@3.0.3: {}
 
@@ -2229,7 +2229,7 @@ snapshots:
 
   picomatch@4.0.4: {}
 
-  postcss@8.5.14:
+  postcss@8.5.15:
     dependencies:
       nanoid: 3.3.12
       picocolors: 1.1.1
@@ -2432,7 +2432,7 @@ snapshots:
     dependencies:
       lightningcss: 1.32.0
       picomatch: 4.0.4
-      postcss: 8.5.14
+      postcss: 8.5.15
       rolldown: 1.0.1
       tinyglobby: 0.2.16
     optionalDependencies:
