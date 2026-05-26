@@ -10,7 +10,12 @@ vi.mock("@cloudflare/puppeteer", () => ({
 	},
 }));
 
-import { buildNotionMarkdown, fetchArticleHtml, resolveArticleMarkdown } from "./article";
+import {
+	buildArchiveMarkdown,
+	buildNotionMarkdown,
+	fetchArticleHtml,
+	resolveArticleMarkdown,
+} from "./article";
 import type { ParsedInoreaderItem } from "./inoreader";
 
 const NOW = new Date("2026-03-29T01:02:03.000Z");
@@ -21,18 +26,14 @@ describe("article", () => {
 		vi.clearAllMocks();
 	});
 
-	it("builds notion markdown and strips a duplicate title heading", () => {
-		const markdown = buildNotionMarkdown(ARTICLE, "# 記事タイトル\n\n本文です。", NOW);
+	it("builds notion markdown body and strips a duplicate title heading", () => {
+		const markdown = buildNotionMarkdown(ARTICLE, "# 記事タイトル\n\n本文です。");
 
-		expect(markdown).toContain("title: 記事タイトル");
-		expect(markdown).toContain("source: https://example.com/article");
-		expect(markdown).toContain("created: 2026-03-29T01:02:03.000Z");
-		expect(markdown).toContain("本文です。");
-		expect(markdown).not.toContain("# 記事タイトル");
+		expect(markdown).toBe("本文です。");
 	});
 
-	it("merges AI frontmatter into the final frontmatter block", () => {
-		const markdown = buildNotionMarkdown(
+	it("merges AI frontmatter into the archive markdown frontmatter block", () => {
+		const markdown = buildArchiveMarkdown(
 			ARTICLE,
 			`---
 description: AI generated summary
@@ -50,7 +51,7 @@ tags:
 
 		expect(markdown.match(/^---$/gm)).toHaveLength(2);
 		expect(markdown).toContain("description: AI generated summary");
-		expect(markdown).toContain("title: AI title");
+		expect(markdown).toContain("title: 記事タイトル");
 		expect(markdown).toContain("cover: https://example.com/cover.png");
 		expect(markdown).toContain("tags:\n  - security\n  - clippings");
 		expect(markdown).toContain('categories:\n  - "[[Clippings]]"');
@@ -65,6 +66,7 @@ tags:
 			newPage: vi.fn().mockResolvedValue({
 				goto: gotoMock,
 				content: vi.fn().mockResolvedValue(htmlResponseBody("Rendered post")),
+				title: vi.fn().mockResolvedValue("Rendered title"),
 			}),
 			close: closeMock,
 		});
@@ -77,6 +79,7 @@ tags:
 
 		expect(article.hostname).toBe("x.com");
 		expect(article.html).toContain("Rendered post");
+		expect(article.title).toBe("Rendered title");
 		expect(gotoMock).toHaveBeenCalledWith("https://x.com/example/status/1", {
 			waitUntil: "networkidle0",
 			timeout: 30_000,
@@ -93,11 +96,13 @@ tags:
 			}),
 		};
 
-		await resolveArticleMarkdown(ARTICLE, ai, fetchMock);
+		const article = await resolveArticleMarkdown(ARTICLE, ai, fetchMock);
 
 		const firstDocument = ai.toMarkdown.mock.calls[0]?.[0];
 		expect(firstDocument.name).toBe("article.html");
 		expect(firstDocument.blob.type).toBe("text/html");
+		expect(article.title).toBe("記事タイトル");
+		expect(article.markdown).toBe("# 記事タイトル\n\n本文です。");
 
 		const html = await firstDocument.blob.text();
 		expect(html).toContain("Article body");
@@ -157,6 +162,7 @@ tags:
 
 		expect(article.hostname).toBe("x.com");
 		expect(article.html).toContain("Direct article");
+		expect(article.title).toBeUndefined();
 		expect(fetchMock).toHaveBeenCalledTimes(1);
 	});
 

@@ -1,7 +1,12 @@
 import { Hono } from "hono";
 
 import { saveArchiveMarkdown } from "./archive";
-import { buildNotionMarkdown, resolveArticleMarkdown } from "./article";
+import {
+	ArticleResolutionError,
+	buildArchiveMarkdown,
+	buildNotionMarkdown,
+	resolveArticleMarkdown,
+} from "./article";
 import { type ParsedInoreaderItem, parseWebhookPayload, type StreamContents } from "./inoreader";
 import { getDataSourceId, getPageIdByUrl, type NotionWriteResult, upsertPage } from "./notion";
 
@@ -145,22 +150,39 @@ async function processItem(
 		existingPageId: existingPageId ?? undefined,
 	});
 	const savedAt = new Date();
+	let resolvedItem = item;
 	let articleMarkdown = "";
+	let archiveMarkdown = "";
 	let notionMarkdown: string;
 
 	try {
-		articleMarkdown = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
-		notionMarkdown = buildNotionMarkdown(item, articleMarkdown, savedAt);
+		const resolvedArticle = await resolveArticleMarkdown(item, env.AI, fetch, env.BROWSER);
+		resolvedItem = {
+			...item,
+			title: resolvedArticle.title,
+		};
+		articleMarkdown = resolvedArticle.markdown;
+		archiveMarkdown = buildArchiveMarkdown(resolvedItem, articleMarkdown, savedAt);
+		notionMarkdown = buildNotionMarkdown(resolvedItem, articleMarkdown);
 	} catch (error) {
+		if (error instanceof ArticleResolutionError) {
+			resolvedItem = {
+				...item,
+				title: error.resolvedTitle,
+			};
+		}
+
 		console.error("Failed to resolve article markdown", {
 			...context,
 			item: itemContext,
 			error: serializeError(error),
 		});
-		notionMarkdown = buildNotionMarkdown(item, "", savedAt);
+		archiveMarkdown = buildArchiveMarkdown(resolvedItem, "", savedAt);
+		notionMarkdown = buildNotionMarkdown(resolvedItem, "");
 		console.log("Falling back to URL-only page content", {
 			...context,
 			item: itemContext,
+			resolvedTitle: resolvedItem.title,
 			savedAt: savedAt.toISOString(),
 		});
 	}
@@ -169,13 +191,20 @@ async function processItem(
 		...context,
 		item: itemContext,
 		articleMarkdownLength: articleMarkdown.length,
+		archiveMarkdownLength: archiveMarkdown.length,
 		notionMarkdownLength: notionMarkdown.length,
 		hasArticleContent: articleMarkdown.length > 0,
+		resolvedTitle: resolvedItem.title,
 		savedAt: savedAt.toISOString(),
 	});
 
 	try {
-		const archiveKey = await saveArchiveMarkdown(env.WEB_CLIPPINGS, item, notionMarkdown, savedAt);
+		const archiveKey = await saveArchiveMarkdown(
+			env.WEB_CLIPPINGS,
+			resolvedItem,
+			archiveMarkdown,
+			savedAt,
+		);
 		console.log("Archived markdown to R2", {
 			...context,
 			item: itemContext,
@@ -193,7 +222,7 @@ async function processItem(
 		fetch,
 		env.NOTION_API_KEY,
 		dataSourceId,
-		item,
+		resolvedItem,
 		notionMarkdown,
 		existingPageId,
 		savedAt,

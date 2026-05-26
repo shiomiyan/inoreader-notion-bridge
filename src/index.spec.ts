@@ -253,18 +253,13 @@ categories:
 		const archivedMarkdown = archive.put.mock.calls[0]?.[1];
 		expect(typeof archivedMarkdown).toBe("string");
 		expect(archivedMarkdown).toContain("description: Converted by AI");
-		expect(archivedMarkdown).toContain("title: AI generated title");
+		expect(archivedMarkdown).toContain("title: テストテストテスト");
 		expect(archivedMarkdown).toContain("tags:\n  - security\n  - clippings");
 		expect(archivedMarkdown).toContain('categories:\n  - "[[Clippings]]"');
 		expect(archivedMarkdown).not.toContain('  - "[[AI]]"');
 		expect((archivedMarkdown as string).match(/^---$/gm)).toHaveLength(2);
-		expect(fetchMock).toHaveBeenCalledWith(
-			"https://api.notion.com/v1/pages",
-			expect.objectContaining({
-				method: "POST",
-				body: expect.stringContaining("description: Converted by AI"),
-			}),
-		);
+		const createBody = getNotionCreateBody(fetchMock);
+		expect(createBody?.markdown).toBe("本文A");
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[1].ack).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].retry).not.toHaveBeenCalled();
@@ -304,9 +299,7 @@ categories:
 
 		const createBody = getNotionCreateBody(fetchMock);
 		expect(createBody?.properties?.url?.url).toBe("https://example.com/");
-		expect(createBody?.markdown).toContain("title: テストテストテスト");
-		expect(createBody?.markdown).toContain("source: https://example.com/");
-		expect(createBody?.markdown).not.toContain("summary body");
+		expect(createBody?.markdown).toBe("");
 		expect(ai.toMarkdown).not.toHaveBeenCalled();
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 		expect(console.error).toHaveBeenCalledWith(
@@ -330,6 +323,7 @@ categories:
 					.mockResolvedValue(
 						"<!DOCTYPE html><html><body><header><nav>Navigation links</nav></header><main><article><h1>Post title</h1><p>Rendered post</p><p>Second rendered paragraph.</p></article><aside>Related links</aside></main><footer>Footer links</footer></body></html>",
 					),
+				title: vi.fn().mockResolvedValue("Rendered title"),
 			}),
 			close: closeMock,
 		});
@@ -380,6 +374,10 @@ categories:
 			waitUntil: "networkidle0",
 			timeout: 30_000,
 		});
+		const createBody = getNotionCreateBody(fetchMock);
+		expect(createBody?.properties?.title?.title?.[0]?.text?.content).toBe("Rendered title");
+		expect(createBody?.markdown).toBe("# テストテストテスト\n\n本文A");
+		expect(createBody?.markdown).not.toContain("---");
 		expect(closeMock).toHaveBeenCalledTimes(1);
 		expect(batch.messages[0].ack).toHaveBeenCalledTimes(1);
 	});

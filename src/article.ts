@@ -9,6 +9,12 @@ export type MarkdownAi = Pick<Env["AI"], "toMarkdown">;
 export type ArticleHtml = {
 	html: string;
 	hostname: string;
+	title?: string;
+};
+
+export type ResolvedArticle = {
+	markdown: string;
+	title: string;
 };
 
 const ARTICLE_FETCH_TIMEOUT_MS = 10_000;
@@ -25,33 +31,52 @@ export async function resolveArticleMarkdown(
 	ai: MarkdownAi,
 	fetchImpl: typeof fetch,
 	fetcher?: Fetcher,
-): Promise<string> {
+): Promise<ResolvedArticle> {
 	const articleHtml = await fetchArticleHtml(inoreader.url, fetchImpl, fetcher);
-	const markdownSourceHtml = extractArticleContentHtml(articleHtml.html) ?? articleHtml.html;
-	const result = await ai.toMarkdown(
-		{
-			name: "article.html",
-			blob: new Blob([markdownSourceHtml], { type: "text/html" }),
-		},
-		{
-			conversionOptions: {
-				html: {
-					hostname: articleHtml.hostname,
+	const resolvedTitle = articleHtml.title?.trim() || inoreader.title;
+
+	try {
+		const markdownSourceHtml = extractArticleContentHtml(articleHtml.html) ?? articleHtml.html;
+		const result = await ai.toMarkdown(
+			{
+				name: "article.html",
+				blob: new Blob([markdownSourceHtml], { type: "text/html" }),
+			},
+			{
+				conversionOptions: {
+					html: {
+						hostname: articleHtml.hostname,
+					},
 				},
 			},
-		},
-	);
+		);
 
-	if (result.format === "error") {
-		throw new Error(`Markdown conversion failed: ${result.error}`);
+		if (result.format === "error") {
+			throw new Error(`Markdown conversion failed: ${result.error}`);
+		}
+
+		const markdown = result.data.trim();
+		if (!markdown) {
+			throw new Error("Markdown conversion returned empty content");
+		}
+
+		return {
+			markdown,
+			title: resolvedTitle,
+		};
+	} catch (error) {
+		throw new ArticleResolutionError(toErrorMessage(error), resolvedTitle);
 	}
+}
 
-	const markdown = result.data.trim();
-	if (!markdown) {
-		throw new Error("Markdown conversion returned empty content");
+export class ArticleResolutionError extends Error {
+	constructor(
+		message: string,
+		readonly resolvedTitle: string,
+	) {
+		super(message);
+		this.name = "ArticleResolutionError";
 	}
-
-	return markdown;
 }
 
 function extractArticleContentHtml(html: string): string | null {
@@ -158,6 +183,7 @@ async function fetchArticleHtmlWithBrowserRendering(
 		return {
 			html,
 			hostname: new URL(url).hostname,
+			title: (await ctx.page.title()).trim() || undefined,
 		};
 	} catch (error) {
 		throw new Error(
@@ -187,9 +213,9 @@ async function useBrowserContext(browserBinding: Fetcher): Promise<BrowserRender
 
 /**
  * Formats article markdown as an Obsidian-friendly document with frontmatter
- * that can also be sent to Notion as the page body.
+ * for archival storage.
  */
-export function buildNotionMarkdown(
+export function buildArchiveMarkdown(
 	item: ParsedInoreaderItem,
 	markdown: string,
 	savedAt: Date = new Date(),
@@ -207,6 +233,12 @@ export function buildNotionMarkdown(
 	const frontmatter = stringify(metadata).trimEnd();
 
 	return `---\n${frontmatter}\n---\n\n${content}`.trim();
+}
+
+export function buildNotionMarkdown(item: ParsedInoreaderItem, markdown: string): string {
+	const extracted = extractLeadingFrontmatter(markdown);
+
+	return removeLeadingDuplicateHeading(extracted.content, item.title);
 }
 
 function removeLeadingDuplicateHeading(markdown: string, title: string): string {
@@ -288,9 +320,7 @@ function mergeFrontmatter(
 		source: defaults.source,
 		created: defaults.created,
 	})) {
-		if (merged[key] === undefined) {
-			merged[key] = value;
-		}
+		merged[key] = value;
 	}
 
 	if (merged.cover === undefined) {
