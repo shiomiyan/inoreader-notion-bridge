@@ -19,11 +19,11 @@
 	"devDependencies": {
 		"@biomejs/biome": "2.5.1",
 		"@cloudflare/puppeteer": "^1.1.0",
-		"@cloudflare/vitest-pool-workers": "^0.16.18",
+		"@cloudflare/vitest-pool-workers": "^0.16.19",
 		"@types/node": "^25.9.0",
 		"typescript": "^6.0.3",
 		"vitest": "~4.1.9",
-		"wrangler": "^4.103.0"
+		"wrangler": "^4.104.0"
 	},
 	"dependencies": {
 		"@mozilla/readability": "^0.6.0",
