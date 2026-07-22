@@ -28,7 +28,7 @@
 	"dependencies": {
 		"@mozilla/readability": "^0.6.0",
 		"hono": "^4.12.28",
-		"linkedom": "^0.18.12",
+		"linkedom": "^0.18.13",
 		"yaml": "^2.9.0"
 	}
 }
