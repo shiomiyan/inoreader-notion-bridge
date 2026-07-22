@@ -1,4 +1,4 @@
-import puppeteer from "@cloudflare/puppeteer";
+import puppeteer, { type BrowserWorker } from "@cloudflare/puppeteer";
 import { Readability } from "@mozilla/readability";
 import { DOMParser } from "linkedom";
 import { parseDocument, stringify } from "yaml";
@@ -30,7 +30,7 @@ export async function resolveArticleMarkdown(
 	inoreader: ParsedInoreaderItem,
 	ai: MarkdownAi,
 	fetchImpl: typeof fetch,
-	fetcher?: Fetcher,
+	fetcher?: BrowserWorker,
 ): Promise<ResolvedArticle> {
 	const articleHtml = await fetchArticleHtml(inoreader.url, fetchImpl, fetcher);
 	const resolvedTitle = articleHtml.title?.trim() || inoreader.title;
@@ -131,7 +131,7 @@ function wrapArticleHtml(content: string): string {
 export async function fetchArticleHtml(
 	url: string,
 	fetchImpl: typeof fetch,
-	browserBinding?: Fetcher,
+	browserBinding?: BrowserWorker,
 ): Promise<ArticleHtml> {
 	if (shouldUseBrowserRendering(url) && browserBinding) {
 		try {
@@ -182,7 +182,7 @@ async function fetchArticleHtmlDirect(url: string, fetchImpl: typeof fetch): Pro
 
 async function fetchArticleHtmlWithBrowserRendering(
 	url: string,
-	fetcher: Fetcher,
+	fetcher: BrowserWorker,
 ): Promise<ArticleHtml> {
 	try {
 		await using ctx = await useBrowserContext(fetcher);
@@ -209,7 +209,7 @@ async function fetchArticleHtmlWithBrowserRendering(
 	}
 }
 
-async function useBrowserContext(browserBinding: Fetcher): Promise<BrowserRenderingContext> {
+async function useBrowserContext(browserBinding: BrowserWorker): Promise<BrowserRenderingContext> {
 	const browser = await puppeteer.launch(browserBinding);
 
 	try {
