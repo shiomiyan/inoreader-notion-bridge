@@ -98,6 +98,7 @@ tags:
 
 		const article = await resolveArticleMarkdown(ARTICLE, ai, fetchMock);
 
+		expect(ai.toMarkdown).toHaveBeenCalledTimes(1);
 		const firstDocument = ai.toMarkdown.mock.calls[0]?.[0];
 		expect(firstDocument.name).toBe("article.html");
 		expect(firstDocument.blob.type).toBe("text/html");
