@@ -112,6 +112,36 @@ tags:
 		expect(html).not.toContain("Footer links");
 	});
 
+	it("falls back to raw HTML when extracted markdown is empty", async () => {
+		const fetchMock = vi.fn<typeof fetch>(async () => htmlResponse("Article body"));
+		const ai = {
+			toMarkdown: vi
+				.fn()
+				.mockResolvedValueOnce({
+					format: "markdown",
+					data: " \n ",
+				})
+				.mockResolvedValueOnce({
+					format: "markdown",
+					data: "# 記事タイトル\n\n元HTMLから変換した本文です。",
+				}),
+		};
+
+		const article = await resolveArticleMarkdown(ARTICLE, ai, fetchMock);
+
+		expect(ai.toMarkdown).toHaveBeenCalledTimes(2);
+		expect(article.markdown).toBe("# 記事タイトル\n\n元HTMLから変換した本文です。");
+
+		const extractedHtml = await ai.toMarkdown.mock.calls[0]?.[0].blob.text();
+		const rawHtml = await ai.toMarkdown.mock.calls[1]?.[0].blob.text();
+		expect(extractedHtml).toContain("readability-page-1");
+		expect(extractedHtml).not.toContain("Navigation links");
+		expect(rawHtml).toContain("Navigation links");
+		expect(rawHtml).toContain("Related links");
+		expect(rawHtml).toContain("Footer links");
+		expect(rawHtml).toContain("Article body");
+	});
+
 	it("falls back to raw HTML when Readability returns empty content", async () => {
 		vi.resetModules();
 		vi.doMock("@cloudflare/puppeteer", () => ({

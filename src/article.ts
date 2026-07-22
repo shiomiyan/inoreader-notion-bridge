@@ -36,26 +36,17 @@ export async function resolveArticleMarkdown(
 	const resolvedTitle = articleHtml.title?.trim() || inoreader.title;
 
 	try {
-		const markdownSourceHtml = extractArticleContentHtml(articleHtml.html) ?? articleHtml.html;
-		const result = await ai.toMarkdown(
-			{
-				name: "article.html",
-				blob: new Blob([markdownSourceHtml], { type: "text/html" }),
-			},
-			{
-				conversionOptions: {
-					html: {
-						hostname: articleHtml.hostname,
-					},
-				},
-			},
+		const extractedArticleHtml = extractArticleContentHtml(articleHtml.html);
+		let markdown = await convertHtmlToMarkdown(
+			extractedArticleHtml ?? articleHtml.html,
+			articleHtml.hostname,
+			ai,
 		);
 
-		if (result.format === "error") {
-			throw new Error(`Markdown conversion failed: ${result.error}`);
+		if (!markdown && extractedArticleHtml !== null) {
+			markdown = await convertHtmlToMarkdown(articleHtml.html, articleHtml.hostname, ai);
 		}
 
-		const markdown = result.data.trim();
 		if (!markdown) {
 			throw new Error("Markdown conversion returned empty content");
 		}
@@ -67,6 +58,32 @@ export async function resolveArticleMarkdown(
 	} catch (error) {
 		throw new ArticleResolutionError(toErrorMessage(error), resolvedTitle);
 	}
+}
+
+async function convertHtmlToMarkdown(
+	html: string,
+	hostname: string,
+	ai: MarkdownAi,
+): Promise<string> {
+	const result = await ai.toMarkdown(
+		{
+			name: "article.html",
+			blob: new Blob([html], { type: "text/html" }),
+		},
+		{
+			conversionOptions: {
+				html: {
+					hostname,
+				},
+			},
+		},
+	);
+
+	if (result.format === "error") {
+		throw new Error(`Markdown conversion failed: ${result.error}`);
+	}
+
+	return result.data.trim();
 }
 
 export class ArticleResolutionError extends Error {
