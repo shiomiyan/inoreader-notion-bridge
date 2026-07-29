@@ -17,13 +17,13 @@
 		"lint": "biome lint ./src"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.3",
+		"@biomejs/biome": "2.5.4",
 		"@cloudflare/puppeteer": "^1.1.0",
-		"@cloudflare/vitest-pool-workers": "^0.18.4",
+		"@cloudflare/vitest-pool-workers": "^0.18.5",
 		"@types/node": "^25.9.0",
 		"typescript": "^6.0.3",
 		"vitest": "~4.1.10",
-		"wrangler": "^4.110.0"
+		"wrangler": "^4.111.0"
 	},
 	"dependencies": {
 		"@mozilla/readability": "^0.6.0",
