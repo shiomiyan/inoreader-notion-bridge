@@ -17,8 +17,8 @@
 		"lint": "biome lint ./src"
 	},
 	"devDependencies": {
-		"@biomejs/biome": "2.5.5",
-		"@cloudflare/puppeteer": "^1.1.0",
+		"@biomejs/biome": "2.5.6",
+		"@cloudflare/puppeteer": "^1.2.0",
 		"@cloudflare/vitest-pool-workers": "^0.18.8",
 		"@types/node": "^25.9.0",
 		"typescript": "^6.0.3",
