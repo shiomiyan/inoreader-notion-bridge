@@ -12,8 +12,8 @@ importers:
         specifier: ^0.6.0
         version: 0.6.0
       hono:
-        specifier: ^4.13.2
-        version: 4.13.2
+        specifier: ^4.13.3
+        version: 4.13.3
       linkedom:
         specifier: ^0.18.13
         version: 0.18.13
@@ -958,8 +958,8 @@ packages:
     resolution: {integrity: sha512-b1O07XYq8eRuVzBNgJLstU6FYc1tS6wnMtF1I1D9lE8LxZSOGZ7LhxN54yPP6mGw5f2CkXY2BQUL9Fx41qvcIg==}
     engines: {node: '>= 14'}
 
-  hono@4.13.2:
-    resolution: {integrity: sha512-JydRilDRkYBQMt9qR9U92mXxmbGqsqSn/IKOrh4e7/gEbn+0zSr8igTu0obwJoNGN4sez28DIql7FBHWydoJpA==}
+  hono@4.13.3:
+    resolution: {integrity: sha512-r8AO2mYHoLxSHkgafNeC/BXyb2vWRxD3jem4Ts+ptav8oTG5FIRifAjuJEmZI4bSvvc2ns0GxmIYiZnHqN3mMw==}
     engines: {node: '>=16.9.0'}
 
   html-escaper@3.0.3:
@@ -2157,7 +2157,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  hono@4.13.2: {}
+  hono@4.13.3: {}
 
   html-escaper@3.0.3: {}
 
